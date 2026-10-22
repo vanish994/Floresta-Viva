@@ -4,7 +4,7 @@ body {
   margin: 0;
   padding: 0;
   overflow: hidden;
-  overscroll-behavior: none; /* sem pull-to-refresh nem bounce */
+  overscroll-behavior: none;
   background: #10140f;
   font-family: ui-monospace, 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
   -webkit-tap-highlight-color: transparent;
@@ -66,7 +66,6 @@ body {
   opacity: 0.65;
 }
 
-/* recolhido (padrão em telas pequenas): só a linha do relógio + botão */
 #hud.collapsed .hud-row:not(:first-child) {
   display: none;
 }
@@ -91,7 +90,7 @@ body {
   border: 1px solid rgba(140, 190, 120, 0.5);
   border-radius: 5px;
   padding: 6px 10px;
-  min-height: 32px; /* alvo de toque confortável */
+  min-height: 32px;
   font: inherit;
   cursor: pointer;
 }
@@ -102,6 +101,27 @@ body {
 
 #btn-hud {
   min-width: 34px;
+}
+
+/* chuva: fica sempre visível, inclusive com o HUD recolhido no celular */
+#btn-rain {
+  position: fixed;
+  top: calc(48px + env(safe-area-inset-top));
+  right: calc(10px + env(safe-area-inset-right));
+  z-index: 26;
+  min-height: 36px;
+  padding: 7px 11px;
+  border: 1px solid rgba(140, 190, 120, 0.55);
+  border-radius: 7px;
+  background: rgba(12, 18, 12, 0.86);
+  color: #e8f3df;
+  font: 700 12px ui-monospace, monospace;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+#btn-rain[aria-pressed="true"] {
+  background: rgba(70, 110, 140, 0.7);
 }
 
 /* ---------- controles de toque ---------- */
