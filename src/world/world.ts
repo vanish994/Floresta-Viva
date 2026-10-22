@@ -11,7 +11,14 @@ import { Climate, GameClock } from './climate';
 import { Chunk } from './chunk';
 import { generateChunk, type GenContext } from './gen';
 import { stepWater, stepBio, stepErosion, type Neighborhood, type ErosionSink } from './ecology';
-import { stepRainwater } from './rainwater';
+import {
+  stepWaterPhysics,
+  accumulateBudget,
+  createWaterBudget,
+  totalWaterVolume,
+  type WaterBudget,
+  type WaterRegion,
+} from './water';
 import type { PlantRecord } from './flora';
 
 export interface WorldStats {
@@ -20,9 +27,22 @@ export interface WorldStats {
   genMs: number;
   simMs: number;
   plants: number;
+  /** volume de água superficial nos chunks carregados (m³) */
+  waterVolume: number;
+  /** custo do passo de física da água (ms, média móvel) */
+  waterMs: number;
 }
 
-export class World implements Neighborhood, ErosionSink {
+/** estado de água arquivado quando um chunk é descarregado */
+interface WaterSnapshot {
+  depth: Float32Array;
+  flowX: Float32Array;
+  flowY: Float32Array;
+  floodHours: Float32Array;
+  surfaceInput: Float32Array;
+}
+
+export class World implements Neighborhood, ErosionSink, WaterRegion {
   readonly cfg: WorldConfig;
   readonly fields: WorldFields;
   readonly climate: Climate;
@@ -31,10 +51,25 @@ export class World implements Neighborhood, ErosionSink {
   /** deltas persistentes de elevação (erosão/alterações), por célula global */
   readonly terrainDeltas = new Map<string, number>();
   /** diffs de save aguardando o chunk ser gerado */
-  pendingDiffs?: Record<string, { removed: number[]; recruits: PlantRecord[]; soil?: number[] }>;
+  pendingDiffs?: Record<
+    string,
+    { removed: number[]; recruits: PlantRecord[]; soil?: number[]; water?: number[]; flow?: number[] }
+  >;
   /** chamado após cada chunk gerado (usado para aplicar diffs persistidos) */
   onChunkGenerated?: (chunk: Chunk) => void;
-  stats: WorldStats = { chunksLoaded: 0, chunksGenerated: 0, genMs: 0, simMs: 0, plants: 0 };
+  stats: WorldStats = {
+    chunksLoaded: 0,
+    chunksGenerated: 0,
+    genMs: 0,
+    simMs: 0,
+    plants: 0,
+    waterVolume: 0,
+    waterMs: 0,
+  };
+  /** orçamento acumulado de água (m³) desde o início da sessão */
+  readonly waterBudget: WaterBudget = createWaterBudget();
+  /** água de chunks descarregados — evita que a borda vire uma parede permanente */
+  private waterArchive = new Map<string, WaterSnapshot>();
 
   private genQueue: ChunkKey[] = [];
   private genCtx: GenContext;
@@ -54,11 +89,14 @@ export class World implements Neighborhood, ErosionSink {
 
   deltaAt = (cellX: number, cellY: number): number => this.terrainDeltas.get(`${cellX},${cellY}`) ?? 0;
 
-  addDelta(cellX: number, cellY: number, d: number): void {
+  /** aplica um delta de elevação e devolve o valor efetivamente aplicado */
+  addDelta(cellX: number, cellY: number, d: number): number {
     const k = `${cellX},${cellY}`;
-    const v = (this.terrainDeltas.get(k) ?? 0) + d;
+    const prev = this.terrainDeltas.get(k) ?? 0;
+    const v = prev + d;
     if (Math.abs(v) < 1e-6) this.terrainDeltas.delete(k);
     else this.terrainDeltas.set(k, clampDelta(v));
+    return (this.terrainDeltas.get(k) ?? 0) - prev;
   }
   getDelta(cellX: number, cellY: number): number {
     return this.terrainDeltas.get(`${cellX},${cellY}`) ?? 0;
@@ -72,6 +110,21 @@ export class World implements Neighborhood, ErosionSink {
     const n = this.cfg.chunkTiles / this.cfg.simCellTiles;
     const cx = Math.floor(cellX / n), cy = Math.floor(cellY / n);
     return this.getChunk(cx, cy) ?? null;
+  }
+
+  /**
+   * Região ativa da física: chunks próximos ao jogador. O anel externo
+   * continua carregado e participa como vizinho (`cellAt`), recebendo água,
+   * mas não é advectado a cada passo — orçamento mobile-first.
+   */
+  waterChunks(): Iterable<Chunk> {
+    const center = chunkOfPx(this.playerX, this.playerY, this.cfg);
+    const r = Math.max(0, this.cfg.waterActiveRadiusChunks);
+    const out: Chunk[] = [];
+    for (const chunk of this.chunks.values()) {
+      if (Math.abs(chunk.cx - center.cx) <= r && Math.abs(chunk.cy - center.cy) <= r) out.push(chunk);
+    }
+    return out;
   }
 
   /**
@@ -138,7 +191,10 @@ export class World implements Neighborhood, ErosionSink {
     const unload = cfg.loadRadiusChunks + cfg.unloadMarginChunks;
     for (const [key, chunk] of [...this.chunks]) {
       const dx = chunk.cx - center.cx, dy = chunk.cy - center.cy;
-      if (Math.max(Math.abs(dx), Math.abs(dy)) > unload) this.chunks.delete(key);
+      if (Math.max(Math.abs(dx), Math.abs(dy)) > unload) {
+        this.storeWaterSnapshot(key, chunk);
+        this.chunks.delete(key);
+      }
     }
   }
 
@@ -152,11 +208,14 @@ export class World implements Neighborhood, ErosionSink {
       const chunk = generateChunk(this.genCtx, k.cx, k.cy);
       this.stats.genMs = this.stats.genMs * 0.9 + (performanceNow() - t0) * 0.1;
       chunk.lastWaterHour = this.clock.totalHours;
+      chunk.lastSoilHour = this.clock.totalHours;
       chunk.lastBioHour = this.clock.totalHours;
       chunk.lastErosionHour = this.clock.totalHours;
       this.chunks.set(key, chunk);
       this.stats.chunksGenerated++;
       this.onChunkGenerated?.(chunk);
+      // água simulada é mais recente que a geração: restaura ao recarregar
+      this.restoreWaterSnapshot(key, chunk);
       made.push(chunk);
     }
     this.stats.chunksLoaded = this.chunks.size;
@@ -164,7 +223,9 @@ export class World implements Neighborhood, ErosionSink {
   }
 
   update(realMs: number): void {
+    const beforeMinutes = this.clock.gameMinutes;
     this.clock.advance(realMs);
+    const gameHours = (this.clock.gameMinutes - beforeMinutes) / 60;
     const t0 = performanceNow();
     const hours = this.clock.totalHours;
     const cfg = this.cfg;
@@ -177,16 +238,16 @@ export class World implements Neighborhood, ErosionSink {
       if (hours - chunk.lastWaterHour > 96) {
         this.catchUp(chunk, hours - chunk.lastWaterHour);
         chunk.lastWaterHour = hours;
+        chunk.lastSoilHour = hours;
         chunk.lastBioHour = hours;
         chunk.lastErosionHour = hours;
         continue;
       }
 
       let guard = 0;
-      while (hours - chunk.lastWaterHour >= cfg.periodWaterHours && guard < maxSteps) {
+      while (hours - chunk.lastSoilHour >= cfg.periodWaterHours && guard < maxSteps) {
         stepWater(chunk, cfg, this.climate, cfg.periodWaterHours, this.clock.dayFloat, this);
-        stepRainwater(chunk, cfg, this.climate, cfg.periodWaterHours, this.clock.dayFloat);
-        chunk.lastWaterHour += cfg.periodWaterHours;
+        chunk.lastSoilHour += cfg.periodWaterHours;
         guard++;
       }
 
@@ -203,10 +264,76 @@ export class World implements Neighborhood, ErosionSink {
         chunk.lastErosionHour += cfg.periodErosionHours;
       }
     }
+
+    // física da água superficial: passo fixo, independente da taxa de quadros
+    this.runWaterPhysics(gameHours);
+
     this.stats.simMs = this.stats.simMs * 0.9 + (performanceNow() - t0) * 0.1;
     let plants = 0;
     for (const c of this.chunks.values()) plants += c.plants.length + c.recruitedPlants.length - c.removedPlants.size;
     this.stats.plants = plants;
+  }
+
+  /** acumulador de tempo de jogo para a física da água */
+  private waterAccumHours = 0;
+
+  private runWaterPhysics(gameHours: number): void {
+    if (!(gameHours > 0)) return;
+    const cfg = this.cfg;
+    this.waterAccumHours += gameHours;
+    const step = Math.max(1e-4, cfg.waterStepHours);
+    let steps = 0;
+    const maxSteps = 64; // orçamento por quadro (evita espiral após aba oculta)
+    const t0 = performanceNow();
+    while (this.waterAccumHours >= step && steps < maxSteps) {
+      const budget = createWaterBudget();
+      stepWaterPhysics(this, step, {
+        climate: this.climate,
+        temperature: this.climate.temperature(this.clock.dayFloat, this.clock.hour, 0.35),
+        daylight: this.climate.sky(this.clock.dayFloat, this.clock.hour).light,
+        worldHours: this.clock.totalHours,
+        openBoundary: true,
+        budget,
+      });
+      accumulateBudget(this.waterBudget, budget);
+      this.waterAccumHours -= step;
+      steps++;
+    }
+    if (steps >= maxSteps) this.waterAccumHours = 0; // descarta atraso excessivo
+    this.stats.waterMs = this.stats.waterMs * 0.9 + (performanceNow() - t0) * 0.1;
+    this.stats.waterVolume = totalWaterVolume(this.chunks.values(), cfg);
+    // o relógio da água reflete exatamente o tempo simulado (não o do render)
+    const simulatedUntil = this.clock.totalHours - this.waterAccumHours;
+    for (const chunk of this.chunks.values()) {
+      if (simulatedUntil > chunk.lastWaterHour) chunk.lastWaterHour = simulatedUntil;
+    }
+  }
+
+  private storeWaterSnapshot(key: string, chunk: Chunk): void {
+    this.waterArchive.set(key, {
+      depth: chunk.waterDepth.slice(),
+      flowX: chunk.flowX.slice(),
+      flowY: chunk.flowY.slice(),
+      floodHours: chunk.floodHours.slice(),
+      surfaceInput: chunk.surfaceInput.slice(),
+    });
+    while (this.waterArchive.size > 192) {
+      const oldest = this.waterArchive.keys().next().value;
+      if (oldest === undefined) break;
+      this.waterArchive.delete(oldest);
+    }
+  }
+
+  private restoreWaterSnapshot(key: string, chunk: Chunk): void {
+    const snap = this.waterArchive.get(key);
+    if (!snap) return;
+    chunk.waterDepth.set(snap.depth);
+    chunk.flowX.set(snap.flowX);
+    chunk.flowY.set(snap.flowY);
+    chunk.floodHours.set(snap.floodHours);
+    chunk.surfaceInput.set(snap.surfaceInput);
+    this.waterArchive.delete(key);
+    chunk.waterDirty = true;
   }
 
   private bioAccum = new Map<string, number>();
@@ -234,6 +361,7 @@ export class World implements Neighborhood, ErosionSink {
       chunk.stress[i] = clamp(chunk.stress[i] * Math.exp(-days * 0.2), 0, 2);
     }
     void cfg;
+    chunk.lastSoilHour = Math.max(chunk.lastSoilHour, chunk.lastWaterHour);
     chunk.dirty = true;
   }
 }

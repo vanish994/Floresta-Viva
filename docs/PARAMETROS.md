@@ -7,7 +7,7 @@ Tudo em `src/core/config.ts` (`DEFAULT_CONFIG`), sobrescrevível por `new World(
 | parâmetro | padrão | efeito |
 | --- | --- | --- |
 | `seed` | 1337 | seed numérica do mundo |
-| `generatorVersion` | 3 | invalida saves de terrenos antigos |
+| `generatorVersion` | 4 | invalida saves de terrenos antigos |
 | `tileSize` | 32 px | tile gráfico (medido nos assets) |
 | `chunkTiles` | 32 | tiles por lado do chunk (1024 px) |
 | `simCellTiles` | 2 | tiles por célula de simulação (grade ambiental 2× mais grossa) |
@@ -36,12 +36,41 @@ Tudo em `src/core/config.ts` (`DEFAULT_CONFIG`), sobrescrevível por `new World(
 | `axialTiltDeg` | 23.4 | inclinação axial do modelo astronômico |
 | `latitudeDeg` | 32 | latitude → variação da duração do dia |
 | `startDayOfYear` / `startHour` | 8 / 8 | instante inicial |
-| `periodWaterHours` | 0.5 | passo da água/umidade |
+| `periodWaterHours` | 0.5 | passo do balanço hídrico do solo |
 | `periodBioHours` | 3 | passo de crescimento/decomposição/nutrientes |
 | `periodErosionHours` | 24 | passo de erosão/geologia |
 
 Referências do ciclo: 06:00 nascer do sol, 12:00 meio-dia, 18:00 pôr do sol no equinócio
 (testado); transições de luz por smoothstep do seno de elevação solar.
+
+## Física da água (`src/world/water.ts`)
+
+| parâmetro | padrão | efeito |
+| --- | --- | --- |
+| `waterStepHours` | 0.02 h | passo fixo do solver (= 1,2 s reais); independe de FPS |
+| `waterMaxSubsteps` | 16 | subpassos por chamada (estabilidade) |
+| `waterActiveRadiusChunks` | 2 | chunks ativos (mobile: 1); o resto é borda |
+| `waterCellMeters` | 8 m | lado da célula de simulação (escala do escoamento) |
+| `waterManningBase` | 0.075 | rugosidade base (canais) |
+| `waterManningVegetation` | 0.06 | rugosidade extra máxima por vegetação |
+| `waterFlowScale` | 0.05 | coeficiente de vazão (calibração do mundo, não SI) |
+| `waterMaxOutflowFraction` | 0.45 | fração máxima da lâmina que pode sair por subpasso |
+| `waterMaxVelocity` | 4 m/s | teto de velocidade (estabilidade) |
+| `waterMaxDepth` | 30 m | teto de lâmina (alívio contabilizado) |
+| `waterHeadEpsilon` | 1e-4 m | Δhead mínimo para haver fluxo |
+| `rainPerHour` | 0.02 m/h | chuva com intensidade 1 |
+| `waterEvaporationPerHour` | 0.0025 m/h | evaporação de água aberta (× temperatura/luz) |
+| `waterDrainagePerHour` | 0.004 m/h | drenagem profunda acima do nível de base |
+| `waterBaseflowPerHour` | 0.02 m/h | recarga de rio por unidade de contribuição local |
+| `waterLakeSeepagePerHour` | 0.3 m/h | recarga máxima de lagos |
+| `waterFloodDepth` | 0.22 m | lâmina considerada inundação |
+| `waterFloodStressHours` | 2 h | tempo de alagamento que começa a estressar |
+| `waterUprootSpeed` | 0.07 m/s | velocidade que começa a arrancar plantas |
+| `waterUprootRate` | 0.22 /h | taxa base de arrancamento |
+| `waterVelocityRelaxSeconds` | 0.8 s | inércia da velocidade (evita direção "piscando") |
+
+Ksat por textura (m/h): arenoso 0,12 · argiloso 0,02 · rochoso 0,006 · florestal 0,05 ·
+aluvial 0,04. Leito de rio/lago infiltra 15–20% do valor da margem.
 
 ## Vegetação
 
@@ -70,13 +99,16 @@ Aparência por estação (`look`) mapeia para as variantes reais do pacote
 
 ## Solo (`src/world/chunk.ts`)
 
-Texturas: 0 arenoso (infiltração 0.85, retenção 0.45), 1 argiloso (0.45/0.90),
-2 rochoso (0.60/0.35, raso), 3 florestal (0.55/1.15), 4 aluvial (0.35/0.80, fértil).
+Texturas: 0 arenoso (Ksat 0,12 · retenção 0,45), 1 argiloso (0,02/0,90),
+2 rochoso (0,006/0,35, raso), 3 florestal (0,05/1,15), 4 aluvial (0,04/0,80, fértil).
+A mesma tabela de Ksat é usada pelo balanço de solo e pela infiltração da lâmina.
 Campos por célula: `moisture, litter, humus, nAvail, pAvail, kAvail, pH, microbe, stress`.
 
 ## Renderização
 
 - Água: bandas de alpha contínuo (`water_mid` + `water_deep` sobrepostos) por
-  profundidade interpolada por tile; frames animados sincronizados (260 ms).
+  profundidade interpolada por tile; alpha `(d−0,025)/0,22`, camada profunda a partir
+  de 0,35 m; filetes na direção de `flowX/flowY` e espuma só acima de 0,085 m/s;
+  frames aceleram com a velocidade real.
 - Neve: chão/arbustos/árvores trocam de variante quando a máxima do dia < 7,5 °C.
 - Iluminação: tint multiply + escuridão com furo de luz de ~150 px no personagem.

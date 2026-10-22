@@ -76,7 +76,19 @@ describe('ecologia', () => {
     const dry = generateChunk(ctxOf(w), 3, 3);
     dry.plants = [];
     for (let k = 0; k < dry.n * dry.n; k++) dry.moisture[k] = 0.3;
-    const i = c.cellIdx(6, 6);
+    // escolhe uma célula de terra firme: em célula inundada a chuva entra
+    // direto na lâmina (a umidade do solo é tratada pela infiltração do solver)
+    const pickDry = (ch: typeof c): number => {
+      for (let y = 0; y < ch.n; y++) {
+        for (let x = 0; x < ch.n; x++) {
+          const idx = ch.cellIdx(x, y);
+          if (ch.waterDepth[idx] <= 0.02) return idx;
+        }
+      }
+      return ch.cellIdx(6, 6);
+    };
+    const i = pickDry(c);
+    const di = pickDry(dry);
     const before = c.moisture[i];
     let rainyDay = 0;
     while (w.climate.rainIntensity(rainyDay) < 0.5 && rainyDay < 400) rainyDay += 1;
@@ -86,7 +98,7 @@ describe('ecologia', () => {
     stepWater(c, w.cfg, w.climate, 6, rainyDay, { cellAt: () => null });
     stepWater(dry, w.cfg, w.climate, 6, dryDay, { cellAt: () => null });
     expect(c.moisture[i]).toBeGreaterThan(before);
-    expect(dry.moisture[dry.cellIdx(6, 6)]).toBeLessThan(0.3);
+    expect(dry.moisture[di]).toBeLessThan(0.3);
   });
 
   it('cobertura de copa cria sombra que limita espécies heliófilas no sub-bosque', () => {

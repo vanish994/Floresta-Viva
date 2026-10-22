@@ -10,10 +10,12 @@
    chunk; a renderização só lê. O desenho é uma lista de **ops** (`src/render/ops.ts`)
    produzida por `composeScene` (função pura) e executada por dois backends:
    `CanvasRenderer` (navegador) e `SoftwareRenderer` (validação headless em Node).
-3. **Frequências distintas.** Relógio visual por frame; água a cada 0,5 h de jogo;
-   biologia a cada 3 h; erosão a cada 24 h. Passos quantizados ⇒ independente de FPS.
+3. **Frequências distintas.** Relógio visual por frame; superfície da água em passo
+   fixo de 0,02 h (1,2 s reais); balanço hídrico do solo a cada 0,5 h; biologia a
+   cada 3 h; erosão a cada 24 h. Passos quantizados ⇒ independente de FPS.
 4. **Persistência por diffs.** A seed regenera o que é determinístico; só mudanças
-   (plantas removidas/recrutadas, solo modificado, deltas de erosão, relógio) são salvas.
+   (plantas removidas/recrutadas, solo modificado, deltas de erosão, lâmina e
+   velocidade da água, relógio) são salvas.
 
 ## Espaços de coordenadas (`src/core/coords.ts`)
 
@@ -53,13 +55,43 @@
 - Lagos: `elev < waterTable(clima)`; profundidade = (wt−elev)·3 com teto.
 - Rios: `stream = smoothstep(acc)` contínuo (sem flip binário nas bordas); margens
   alargadas para células de cota próxima (rios de 2–3 células).
-- Escoamento superficial do passo de água roteia pela flowDir, atravessando chunks
-  via `Neighborhood.cellAt`.
+- A hidrologia D8 é apenas a **condição inicial** (relevo dos canais, lagos,
+  `waterBase` e `springWeight`); a lâmina em si é simulada por `water.ts`.
+
+## Física da água superficial (`src/world/water.ts`)
+
+- Volume por célula (`waterDepth`, m) sobre a grade ambiental; `head = elev + depth`.
+- Lei de Manning por aresta (8 direções), com lâmina acima da soleira entre as
+  células, rugosidade do solo + vegetação e distância real entre células.
+- Duas garantias por transferência: equalização de superfície (`≤ 0,5·Δh·A`) e
+  disponibilidade (`≤ 45%` da lâmina da origem). Nunca há profundidade negativa
+  nem oscilação em terreno plano.
+- Todos os fluxos usam snapshot (`waterDepth` + `waterDelta` zerado por subpasso)
+  ⇒ o resultado não depende da ordem de varredura.
+- Vizinhança via mundo (`cellAt`): a fronteira de chunk é transparente; o anel
+  externo carregado serve de borda e a borda ativa é aberta para jusante
+  (`budget.boundary`), evitando represar rios no limite do streaming.
+- Fontes/sumidouros explícitos e contabilizados em `WaterBudget` (m³): chuva,
+  nascentes (recarga do lençol), evaporação, infiltração, drenagem e borda.
+- `flowX/flowY` (m/s) derivados dos volumes transferidos alimentam renderização,
+  erosão e arrancamento de vegetação. Nada de animação independente do estado.
+
+## Acoplamentos
+
+- **Solo**: `stepWater` (ecology) faz chuva → interceptação → infiltração →
+  `surfaceInput` (água pendente que o solver move). Não há mais roteamento por D8
+  nem criação de água no passo de solo.
+- **Erosão**: usa velocidade e profundidade reais; sedimento suspenso conservado;
+  `chunk.elev` atualizado no mesmo passo (deformação visível, deltas persistentes).
+- **Vegetação**: alagamento acumula `floodHours` → estresse por espécie; arrasto
+  `ρgh·v` com resistência por raiz/tamanho derruba árvores vulneráveis (teto por
+  passo, hash determinístico, liteira no local, índice reconstruído).
 
 ## Ecologia (`src/world/ecology.ts`)
 
-- `stepWater`: chuva → interceptação pela copa → infiltração por textura → escoamento →
-  evaporação/transpiração → percolação; umidade limitada a [0,1] (sem criação de água).
+- `stepWater`: chuva → interceptação pela copa → infiltração por textura → escoamento
+  pendente (`surfaceInput`) → evaporação/transpiração → percolação; umidade limitada a
+  [0,1] (sem criação de água).
 - `stepBio`: liteira (com pulso outonal das decíduas) → decomposição
   (função de umidade/temperatura) → húmus + mineralização de N/P/K; imobilização
   microbiana; intemperismo como única entrada de P; absorção pela vegetação;
@@ -83,7 +115,8 @@
 ## Renderização (`src/render/scene.ts`)
 
 Ordem: chão (bioma/trilha/hillshade/penhasco/praias) → água (duas camadas com alpha
-contínuo por profundidade interpolada por tile ⇒ margens suaves) → decalques de solo →
+contínuo por profundidade interpolada por tile ⇒ margens suaves; filetes e espuma
+seguem `flowX/flowY` reais) → decalques de solo →
 sprites ordenados por y (profundidade) → chuva → iluminação (tint multiply + escuridão
 com furo de luz no personagem) → overlay de depuração.
 
@@ -94,8 +127,9 @@ usam escala uniforme quantizada; o marcador roxo de sombra vira sombra escura
 
 ## Persistência (`src/world/persistence.ts`)
 
-`localStorage['floresta-viva:save:v1']` com `{version, generatorVersion, seed,
-clockMinutes, player, deltas, chunks{removed, recruits, soil quantizado}}`.
+`localStorage['floresta-viva:save:v2']` com `{version, generatorVersion, seed,
+clockMinutes, player, deltas, chunks{removed, recruits, soil, water, flow}}`
+(lâmina quantizada em 12 m, velocidade em ±4 m/s).
 Load seguro: versão/seed/gerador conferidos; diffs aplicados quando o chunk é gerado
 (`world.onChunkGenerated`).
 
@@ -125,6 +159,7 @@ mundo via zoocoria, e as interfaces `FaunaAgent`/`FaunaSystem` para agentes futu
 
 ## Ferramentas
 
-- `tools/preview.ts` — validação visual headless (cenas + mapas de campos).
+- `tools/preview.ts` — validação visual headless (cenas + mapas de campos, `--sim`/`--rain`).
+- `tools/water-scenario.ts` — cenário reproduzível da física da água com orçamento de massa.
 - `tools/png.ts` — codec PNG sem dependências (decode dos sprites / encode dos previews).
 - `tools/gen-manifest.mjs` — regenera o manifesto de sprites a partir das medições.

@@ -50,6 +50,8 @@ function main() {
   const W = Number(arg('w', '768'));
   const H = Number(arg('h', '512'));
   const debug = arg('debug', '') as DebugMode | '';
+  const simHours = Number(arg('sim', '0')); // horas de jogo simuladas antes de renderizar
+  const rain = arg('rain', '') === '1'; // força chuva máxima durante a simulação
   let cellC = Number(arg('cell', '0'));
   const find = arg('find', '');
   let useFound = false;
@@ -65,6 +67,7 @@ function main() {
 
   const world = new World({ seed });
   world.clock.gameMinutes = day * 1440 + hour * 60;
+  if (rain) world.climate.setRainOverride(true);
   const cellPx = world.cfg.simCellTiles * world.cfg.tileSize;
   const centerX = cellC * cellPx + cellPx / 2;
   const centerY = cellC * cellPx + cellPx / 2;
@@ -102,6 +105,18 @@ function main() {
   console.log(`chunks gerados: ${made.length} em ${genMs} ms (${(genMs / Math.max(1, made.length)).toFixed(1)} ms/chunk)`);
   // atualiza a simulação alguns passos para o estado ecológico existir
   for (let i = 0; i < 6; i++) world.update(0);
+  if (simHours > 0) {
+    // 30 s reais = 0,5 h de jogo; a física da água roda em passos fixos
+    const steps = Math.round((simHours / 0.5) * 1);
+    const v0 = [...world.chunks.values()].reduce((a, c) => a + c.waterVolume(world.cfg.waterCellMeters), 0);
+    for (let i = 0; i < steps; i++) world.update(30000);
+    const v1 = [...world.chunks.values()].reduce((a, c) => a + c.waterVolume(world.cfg.waterCellMeters), 0);
+    console.log(
+      `água: ${simHours} h simuladas | volume ${(v0 / 1000).toFixed(1)}k → ${(v1 / 1000).toFixed(1)}k m³ | ` +
+        `chuva ${(world.waterBudget.rain / 1000).toFixed(1)}k | nascentes ${(world.waterBudget.springs / 1000).toFixed(1)}k | ` +
+        `evap ${(world.waterBudget.evaporation / 1000).toFixed(1)}k | infiltração ${(world.waterBudget.infiltration / 1000).toFixed(1)}k`,
+    );
+  }
 
   const camX = useFound ? foundX * cellPx : centerX;
   const camY = useFound ? foundY * cellPx : centerY;

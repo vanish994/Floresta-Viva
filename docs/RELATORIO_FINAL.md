@@ -47,13 +47,13 @@ em TypeScript + Canvas2D (Vite), reaproveitando 100% dos sprites do pacote.
 ## Principais arquivos
 
 - `src/core/` — `rng.ts`, `coords.ts`, `config.ts`
-- `src/world/` — `fields.ts`, `hydro.ts`, `gen.ts`, `chunk.ts`, `world.ts`, `ecology.ts`,
-  `climate.ts`, `flora.ts`, `fauna.ts`, `persistence.ts`
+- `src/world/` — `fields.ts`, `hydro.ts`, `water.ts`, `gen.ts`, `chunk.ts`, `world.ts`,
+  `ecology.ts`, `climate.ts`, `flora.ts`, `fauna.ts`, `persistence.ts`
 - `src/render/` — `ops.ts`, `scene.ts`, `CanvasRenderer.ts`, `manifest.ts` (gerado),
   `sanitize.ts`
 - `src/game/` — `player.ts`, `input.ts`; `src/main.ts`; `index.html`; `src/ui/style.css`
 - `tools/` — `preview.ts`, `software.ts`, `png.ts`, `gen-manifest.mjs`, `data/*`
-- `tests/` — 7 arquivos, 39 testes
+- `tests/` — 9 arquivos, 58 testes
 - `docs/` — este relatório, `ARQUITETURA.md`, `PARAMETROS.md`, `imagens/`
 
 ## Como funciona a geração por seed e chunks
@@ -74,7 +74,8 @@ FNV-1a; a versão do gerador invalida saves incompatíveis.
 - **Contraste e leitura**: hillshade por aspecto solar, penhascos reais, praias arenosas
   em lagos, margens úmidas em rios, trilhas sinuosas de solo batido.
 - **Água contínua**: profundidade interpolada por tile com duas camadas de alpha
-  (rasa→profunda) + frames animados sincronizados; linha d'água escura na borda.
+  (rasa→profunda) a partir da lâmina física; filetes e espuma seguem o vetor de
+  correnteza real; frames aceleram com a velocidade.
 - **Assets respeitados**: rects medidos por bounding box de alpha (árvores grandes têm
   frames de 60–90 px, não 32); proporção preservada (escala uniforme apenas para
   crescimento); marcador roxo de sombra convertido em sombra escura.
@@ -149,3 +150,42 @@ produção passa.
 - Construções/colheita do jogador além de cortar/plantar árvores.
 - Áudio (o pacote tem `Background Music/` no zip, não extraído/usado).
 - Sincronização multi-sessão/multiplayer (fora do escopo).
+
+
+---
+
+## Atualização — física real da água (modelo conservativo)
+
+O sistema anterior de água era visual: a lâmina vinha pronta da hidrologia D8 e o
+passo "de água" somava volumes por fórmulas arbitrárias, roteava pela direção D8
+dentro de cada chunk (parede nas bordas) e relaxava lagos/canais para alvos
+sazonais — criando e destruindo água sem fonte ou sumidouro, e sem conservação.
+
+Agora existe um solver de **volume por célula** (`src/world/water.ts`) rodando em
+passo fixo de 0,02 h de jogo: `head = elevação + profundidade`, fluxo por Manning
+entre as 8 direções, lâmina acima da soleira, rugosidade do solo e da vegetação,
+com dois limites por transferência (equalização de superfície e disponibilidade da
+origem). Todos os fluxos são calculados sobre snapshot e aplicados em buffers de
+transferência ⇒ conservação de massa e independência da ordem de varredura; a
+vizinhança é resolvida pelo mundo (sem fronteira artificial entre chunks).
+
+Chuva, nascentes (`waterBase · springWeight`), evaporação, infiltração, drenagem e
+saídas de borda são somadas por processo em `world.waterBudget` (m³). O jogo mostra
+o volume de água no HUD e o modo de depuração `current` exibe a velocidade real.
+
+Acoplamentos: a erosão passou a usar velocidade/profundidade reais com sedimento
+conservado e atualização imediata de `chunk.elev`; o alagamento acumula
+`floodHours` → estresse por espécie; o arrasto `ρgh·v` derruba árvores vulneráveis
+(resistência por raiz/tamanho, teto por passo, liteira no local). A lâmina e a
+velocidade são persistidas por chunk (save v2).
+
+Resultados medidos (detalhes em `docs/FISICA_DA_AGUA.md`): **58 testes aprovados**
+(15 de água), fechamento de massa com erro 0,0000% sem chuva e 0,0007% com chuva
+forte, cenário reproduzível (encosta/canal/depressão) mostrando a lâmina descendo
+de 0,45 m para 0,10 m no canal e a jusante subindo de 0 → 1,47 m, e solver custando
+0,5–1,1 ms por quadro em 9–49 chunks.
+
+Limitações: modelo hidrostático de poços (sem ondas/ressaltos), escala calibrada
+(`waterFlowScale`), arquivo de água de chunks descarregados capado em 192 chunks,
+nascentes como condição de contorno (sem aquífero completo) e erosão limitada a
+±0,25 m por célula pelo limite persistente existente.

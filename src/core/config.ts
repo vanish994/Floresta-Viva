@@ -36,6 +36,49 @@ export interface WorldConfig {
   streamThreshold: number;
   /** acumulação para rio permanente */
   riverThreshold: number;
+  // --- física da água superficial (volume por célula) ---
+  /** passo fixo da física (horas de jogo) — 0,02 h = 1,2 s reais */
+  waterStepHours: number;
+  /** limite de subpassos por passo (estabilidade numérica) */
+  waterMaxSubsteps: number;
+  /** raio (chunks) da região ativa de física; o anel externo serve de borda */
+  waterActiveRadiusChunks: number;
+  /** lado de uma célula de simulação em metros (escala do escoamento) */
+  waterCellMeters: number;
+  /** rugosidade Manning de base (canais) */
+  waterManningBase: number;
+  /** rugosidade máxima acrescentada por vegetação/obstáculos */
+  waterManningVegetation: number;
+  /** coeficiente de vazão: calibra a escala do mundo (não é 1 SI) */
+  waterFlowScale: number;
+  /** fração máxima da profundidade que pode sair de uma célula por subpasso */
+  waterMaxOutflowFraction: number;
+  /** velocidade máxima (m/s) para estabilidade e renderização */
+  waterMaxVelocity: number;
+  /** profundidade máxima de segurança (m) */
+  waterMaxDepth: number;
+  /** diferença de potencial abaixo da qual o fluxo é considerado nulo (m) */
+  waterHeadEpsilon: number;
+  /** chuva em metros por hora com intensidade 1 */
+  rainPerHour: number;
+  /** evaporação de água aberta em metros por hora (referência) */
+  waterEvaporationPerHour: number;
+  /** drenagem profunda de água acima do nível de base (m/h) */
+  waterDrainagePerHour: number;
+  /** recarga de rios pelo lençol (m/h) */
+  waterBaseflowPerHour: number;
+  /** recarga de lagos pelo lençol (m/h) */
+  waterLakeSeepagePerHour: number;
+  /** profundidade considerada inundação (m) */
+  waterFloodDepth: number;
+  /** horas de inundação a partir das quais a vegetação sofre estresse (h) */
+  waterFloodStressHours: number;
+  /** velocidade de correnteza que começa a arrancar plantas (m/s) */
+  waterUprootSpeed: number;
+  /** taxa de arrancamento por hora em condições plenas */
+  waterUprootRate: number;
+  /** tempo que leva para a velocidade relaxar (s) */
+  waterVelocityRelaxSeconds: number;
   // --- tempo / astronomia ---
   /** minutos reais por dia de jogo (requisito: 24) */
   realMinutesPerDay: number;
@@ -65,7 +108,7 @@ export interface WorldConfig {
 
 export const DEFAULT_CONFIG: WorldConfig = {
   seed: 1337,
-  generatorVersion: 3,
+  generatorVersion: 4,
   tileSize: 32,
   chunkTiles: 32,
   simCellTiles: 2,
@@ -79,6 +122,27 @@ export const DEFAULT_CONFIG: WorldConfig = {
   waterTableBase: 0.225,
   streamThreshold: 70,
   riverThreshold: 300,
+  waterStepHours: 0.02,
+  waterMaxSubsteps: 16,
+  waterActiveRadiusChunks: 2,
+  waterCellMeters: 8,
+  waterManningBase: 0.075,
+  waterManningVegetation: 0.06,
+  waterFlowScale: 0.05,
+  waterMaxOutflowFraction: 0.45,
+  waterMaxVelocity: 4,
+  waterMaxDepth: 30,
+  waterHeadEpsilon: 1e-4,
+  rainPerHour: 0.02,
+  waterEvaporationPerHour: 0.0025,
+  waterDrainagePerHour: 0.004,
+  waterBaseflowPerHour: 0.02,
+  waterLakeSeepagePerHour: 0.3,
+  waterFloodDepth: 0.22,
+  waterFloodStressHours: 2,
+  waterUprootSpeed: 0.07,
+  waterUprootRate: 0.22,
+  waterVelocityRelaxSeconds: 0.8,
   realMinutesPerDay: 24,
   daysPerYear: 28,
   axialTiltDeg: 23.4,
