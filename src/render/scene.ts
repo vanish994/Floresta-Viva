@@ -224,8 +224,26 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
         }
       }
       tileCount++;
-      if (kind & 2 && hash2(cfg.seed, tx, ty, 171) > 0.72) {
-        ops.push({ k: 'fill', x: sx + 5, y: sy + 9, w: 14, h: 2, r: 226, g: 244, b: 255, a: 0.22 * alpha });
+      if (kind & 2 && hash2(cfg.seed, tx, ty, 171) > 0.58) {
+        // Pequenas cristas claras se deslocam na direção real do fluxo D8.
+        // A fase depende do tempo e da posição, evitando que toda a água ande junta.
+        const flow = a ? a.chunk.flowDir[a.ci] : -1;
+        const phase = ((opts.timeMs / 150 + hash2(cfg.seed, tx, ty, 172) * 3) % 1 + 1) % 1;
+        const travel = 3 + phase * Math.max(1, T - 9);
+        const streakAlpha = (0.24 + alpha * 0.22) * (snowy ? 0.8 : 1);
+        if (flow === 2 || flow === 6) {
+          const py = flow === 2 ? travel : T - travel - 3;
+          ops.push({ k: 'fill', x: sx + 9, y: sy + py, w: 2, h: 6, r: 218, g: 242, b: 255, a: streakAlpha });
+        } else if (flow === 1 || flow === 5) {
+          const p = flow === 1 ? travel : T - travel - 3;
+          ops.push({ k: 'fill', x: sx + p, y: sy + p, w: 3, h: 3, r: 218, g: 242, b: 255, a: streakAlpha });
+        } else if (flow === 3 || flow === 7) {
+          const p = flow === 3 ? travel : T - travel - 3;
+          ops.push({ k: 'fill', x: sx + p, y: sy + T - p - 4, w: 3, h: 3, r: 218, g: 242, b: 255, a: streakAlpha });
+        } else {
+          const px = flow === 4 ? T - travel - 5 : travel;
+          ops.push({ k: 'fill', x: sx + px, y: sy + 9, w: 6, h: 2, r: 218, g: 242, b: 255, a: streakAlpha });
+        }
       }
     }
   }
