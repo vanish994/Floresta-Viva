@@ -99,8 +99,8 @@ document.getElementById('btn-char')!.addEventListener('click', () => {
 const rainButton = document.getElementById('btn-rain');
 if (rainButton) {
   rainButton.addEventListener('click', () => {
-    const enabled = (globalThis as typeof globalThis & { __florestaRainOverride?: boolean }).__florestaRainOverride !== true;
-    (globalThis as typeof globalThis & { __florestaRainOverride?: boolean }).__florestaRainOverride = enabled;
+    const enabled = rainButton.getAttribute('aria-pressed') !== 'true';
+    world.climate.setRainOverride(enabled);
     rainButton.textContent = enabled ? '☀ parar chuva' : '🌧 chuva';
     rainButton.setAttribute('aria-pressed', String(enabled));
   });
