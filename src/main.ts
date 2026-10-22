@@ -89,7 +89,8 @@ document.getElementById('btn-char')!.addEventListener('click', () => {
 });
 window.addEventListener('beforeunload', () => saveWorld(world));
 
-renderer.load(allAssetFiles()).then(() => {
+const assetBase = `${import.meta.env.BASE_URL}assets/`;
+renderer.load(allAssetFiles(), assetBase).then(() => {
   el('loading').style.display = 'none';
   requestAnimationFrame(loop);
 });
