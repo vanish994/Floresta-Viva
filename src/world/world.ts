@@ -11,6 +11,7 @@ import { Climate, GameClock } from './climate';
 import { Chunk } from './chunk';
 import { generateChunk, type GenContext } from './gen';
 import { stepWater, stepBio, stepErosion, type Neighborhood, type ErosionSink } from './ecology';
+import { stepRainwater } from './rainwater';
 import type { PlantRecord } from './flora';
 
 export interface WorldStats {
@@ -93,8 +94,6 @@ export class World implements Neighborhood, ErosionSink {
         const slope = this.fields.slopeAspect(cx, cy).slope;
         if (e <= wt + 0.06 || slope >= 1.4) continue;
         const forest = this.fields.forestDensity(cx, cy, wet);
-        // floresta pesa mais que distância (penalidade leve): o jogador
-        // nasce DENTRO de um bosque sempre que existir um alcançável
         const score = forest * 2 - r * 0.012 + (this.fields.trailField(cx, cy) > 0.4 ? 0.2 : 0);
         if (score > bestScore) {
           bestScore = score;
@@ -102,12 +101,11 @@ export class World implements Neighborhood, ErosionSink {
           by = cy;
         }
       }
-      if (bestScore > 1.3) break; // já achou um bom bosque perto
+      if (bestScore > 1.3) break;
     }
     return { x: bx * cellPx + cellPx / 2, y: by * cellPx + cellPx / 2 };
   }
 
-  /** pede o carregamento dos chunks ao redor do personagem (com lookahead) */
   requestChunks(px: number, py: number, vx: number, vy: number): void {
     this.playerX = px;
     this.playerY = py;
@@ -117,7 +115,6 @@ export class World implements Neighborhood, ErosionSink {
     const center = chunkOfPx(px, py, cfg);
     const wanted = new Set<string>();
     for (const k of chunksInRadius(center.cx, center.cy, cfg.loadRadiusChunks)) wanted.add(chunkKeyStr(k.cx, k.cy));
-    // lookahead na direção do movimento
     const speed = Math.hypot(vx, vy);
     if (speed > 4) {
       const dx = Math.round(vx / speed), dy = Math.round(vy / speed);
@@ -132,24 +129,19 @@ export class World implements Neighborhood, ErosionSink {
         this.genQueue.push({ cx, cy });
       }
     }
-    // prioridade: distância ao centro (+ viés de lookahead)
     this.genQueue.sort((a, b) => dist(a) - dist(b));
     function dist(k: ChunkKey) {
       const dx = k.cx - center.cx, dy = k.cy - center.cy;
       const bias = speed > 4 ? -(dx * Math.sign(vx) + dy * Math.sign(vy)) * 0.35 : 0;
       return dx * dx + dy * dy + bias;
     }
-    // descarrega chunks distantes
     const unload = cfg.loadRadiusChunks + cfg.unloadMarginChunks;
     for (const [key, chunk] of [...this.chunks]) {
       const dx = chunk.cx - center.cx, dy = chunk.cy - center.cy;
-      if (Math.max(Math.abs(dx), Math.abs(dy)) > unload) {
-        this.chunks.delete(key);
-      }
+      if (Math.max(Math.abs(dx), Math.abs(dy)) > unload) this.chunks.delete(key);
     }
   }
 
-  /** processa a fila de geração com orçamento por frame (sem travamentos) */
   pumpGeneration(budget = this.cfg.maxChunkGenPerFrame): Chunk[] {
     const made: Chunk[] = [];
     for (let i = 0; i < budget && this.genQueue.length > 0; i++) {
@@ -171,10 +163,6 @@ export class World implements Neighborhood, ErosionSink {
     return made;
   }
 
-  /**
-   * Avança o relógio e executa os processos ambientais nas frequências certas.
-   * `realMs` é tempo real; os passos usam horas de jogo (independente de FPS).
-   */
   update(realMs: number): void {
     this.clock.advance(realMs);
     const t0 = performanceNow();
@@ -186,7 +174,6 @@ export class World implements Neighborhood, ErosionSink {
       const near = dx <= 1 && dy <= 1;
       const maxSteps = near ? 6 : 2;
 
-      // regiões muito tempo descarregadas: avanço agregado determinístico
       if (hours - chunk.lastWaterHour > 96) {
         this.catchUp(chunk, hours - chunk.lastWaterHour);
         chunk.lastWaterHour = hours;
@@ -195,14 +182,14 @@ export class World implements Neighborhood, ErosionSink {
         continue;
       }
 
-      // --- água/umidade: passos curtos e frequentes ---
       let guard = 0;
       while (hours - chunk.lastWaterHour >= cfg.periodWaterHours && guard < maxSteps) {
         stepWater(chunk, cfg, this.climate, cfg.periodWaterHours, this.clock.dayFloat, this);
+        stepRainwater(chunk, cfg, this.climate, cfg.periodWaterHours, this.clock.dayFloat);
         chunk.lastWaterHour += cfg.periodWaterHours;
         guard++;
       }
-      // --- biologia: passos médios ---
+
       guard = 0;
       while (hours - chunk.lastBioHour >= cfg.periodBioHours && guard < maxSteps) {
         const res = stepBio(chunk, cfg, this.climate, cfg.periodBioHours, this.clock.dayFloat);
@@ -210,7 +197,7 @@ export class World implements Neighborhood, ErosionSink {
         chunk.lastBioHour += cfg.periodBioHours;
         guard++;
       }
-      // --- erosão/geologia: passos longos ---
+
       if (hours - chunk.lastErosionHour >= cfg.periodErosionHours) {
         stepErosion(chunk, cfg, cfg.periodErosionHours, this.clock.dayFloat, this);
         chunk.lastErosionHour += cfg.periodErosionHours;
@@ -234,16 +221,13 @@ export class World implements Neighborhood, ErosionSink {
     }
   }
 
-  /** avanço agregado para regiões que ficaram descarregadas (aproximação documentada) */
   private catchUp(chunk: Chunk, elapsedHours: number): void {
     const cfg = this.cfg;
     const days = elapsedHours / 24;
     const wet = this.climate.meanWetness();
     for (let i = 0; i < chunk.n * chunk.n; i++) {
-      // umidade relaxa para o equilíbrio climático local
       const target = clamp01(0.18 + wet * 0.4 + (chunk.waterDepth[i] > 0 ? 0.35 : 0));
       chunk.moisture[i] += (target - chunk.moisture[i]) * (1 - Math.exp(-days * 0.5));
-      // liteira/húmus avançam analyticamente para o equilíbrio de produção/decomposição
       const prod = 0.09 * days;
       chunk.litter[i] = clamp(chunk.litter[i] + prod - chunk.litter[i] * 0.05 * days, 0, 12);
       chunk.humus[i] = clamp(chunk.humus[i] + chunk.litter[i] * 0.02 * days, 0, 20);
