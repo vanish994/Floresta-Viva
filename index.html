@@ -37,21 +37,6 @@
       </div>
     </div>
     <button id="btn-rain" aria-pressed="false">🌧 chuva</button>
-    <script>
-      (() => {
-        const rainGlobal = globalThis;
-        rainGlobal.__florestaRainOverride = false;
-        const button = document.getElementById('btn-rain');
-        button?.addEventListener('click', () => {
-          const enabled = rainGlobal.__florestaRainOverride !== true;
-          rainGlobal.__florestaRainOverride = enabled;
-          if (button) {
-            button.textContent = enabled ? '☀ parar chuva' : '🌧 chuva';
-            button.setAttribute('aria-pressed', String(enabled));
-          }
-        });
-      })();
-    </script>
     <script type="module" src="./src/main.ts"></script>
   </body>
 </html>
