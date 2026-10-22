@@ -18,7 +18,7 @@ import type { Op, SceneOps } from './ops';
 import { SEASONS } from '../world/climate';
 
 export type DebugMode =
-  | null | 'chunks' | 'elevation' | 'moisture' | 'flow' | 'soil' | 'veg' | 'water' | 'nutrients';
+  | null | 'chunks' | 'elevation' | 'moisture' | 'flow' | 'current' | 'soil' | 'veg' | 'water' | 'nutrients';
 
 export interface Camera {
   x: number;
@@ -140,9 +140,9 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
         for (const [ox, oy] of nbs) {
           const b = at(tx + ox, ty + oy);
           if (!b) continue;
-          if (b.chunk.waterDepth[b.ci] > 0.12) near++;
-          if (b.chunk.waterDepth[b.ci] > 0.3) nearDeep++;
-          if (b.chunk.waterDepth[b.ci] > 0.3 && b.chunk.waterKind[b.ci] & 1) nearLake++;
+          if (b.chunk.waterDepth[b.ci] > 0.03) near++;
+          if (b.chunk.waterDepth[b.ci] > 0.25) nearDeep++;
+          if (b.chunk.waterDepth[b.ci] > 0.25 && b.chunk.waterKind[b.ci] & 1) nearLake++;
         }
         if (near > 0) {
           const lakeShore = nearLake > 0;
@@ -189,27 +189,33 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
       const a = at(tx, ty);
       const dCell = a ? a.chunk.waterDepth[a.ci] : 0;
       const d = depthAtTile(tx, ty);
-      if (d <= 0.06 && dCell <= 0.06) continue;
+      if (d <= 0.02 && dCell <= 0.02) continue;
       const sx = tx * T - cam.x;
       const sy = ty * T - cam.y;
       const kind = a ? a.chunk.waterKind[a.ci] : 0;
-      const alpha = clamp((d - 0.16) / 0.4, 0, 1);
+      // calibrado para a lâmina FÍSICA (m): 3 cm já tinge, 25 cm fica opaco
+      const alpha = clamp((d - 0.025) / 0.22, 0, 1);
       if (alpha <= 0.02) continue;
-      // duas camadas com alpha contínuo → transição rasa→profunda sem degraus duros
-      const frameIdx = Math.floor(opts.timeMs / 260) % 4;
+      // velocidade REAL do solver (m/s): orienta a animação e os filetes
+      const vx = a ? a.chunk.flowX[a.ci] : 0;
+      const vy = a ? a.chunk.flowY[a.ci] : 0;
+      const speed = Math.hypot(vx, vy);
+      // água parada tem superfície estável; correnteza acelera os quadros
+      const frameMs = 420 / (0.6 + Math.min(2.5, speed * 12));
+      const frameIdx = Math.floor(opts.timeMs / frameMs) % 4;
       const mid = SPRITES.water_mid.frames[frameIdx];
       ops.push({ k: 'blit', img: SPRITES.water_mid.file, sx: mid[0], sy: mid[1], sw: mid[2], sh: mid[3], dx: sx, dy: sy, dw: T, dh: T, alpha: alpha * 0.92 * (snowy ? 0.85 : 1) });
-      const deepA = smoothstepLocal(0.5, 1.3, d);
+      const deepA = smoothstepLocal(0.35, 1.1, d);
       if (deepA > 0.02) {
         const deep = SPRITES.water_deep.frames[frameIdx];
         ops.push({ k: 'blit', img: SPRITES.water_deep.file, sx: deep[0], sy: deep[1], sw: deep[2], sh: deep[3], dx: sx, dy: sy, dw: T, dh: T, alpha: deepA });
       }
       // Profundidade legível: água rasa mantém o brilho; água funda ganha
       // uma camada azul-escura e uma faixa de luz na superfície.
-      if (d > 0.28) {
-        const depthShade = smoothstepLocal(0.28, 1.5, d);
+      if (d > 0.18) {
+        const depthShade = smoothstepLocal(0.18, 1.2, d);
         ops.push({ k: 'fill', x: sx, y: sy, w: T, h: T, r: 5, g: 28, b: 58, a: depthShade * 0.34 });
-        if (d > 0.85 && hash2(cfg.seed, tx, ty, 173) > 0.66) {
+        if (d > 0.6 && hash2(cfg.seed, tx, ty, 173) > 0.66) {
           ops.push({ k: 'fill', x: sx + 3, y: sy + 4, w: Math.max(4, T - 8), h: 1, r: 190, g: 226, b: 245, a: 0.14 + depthShade * 0.12 });
         }
       }
@@ -219,7 +225,8 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
         for (const [ox, oy, ex, ey] of nbs) {
           const b = at(tx + ox, ty + oy);
           const bd = b ? b.chunk.waterDepth[b.ci] : 0;
-          if (bd <= 0.09) {
+          // só na margem real (vizinhança seca) — evita grade entre células molhadas
+          if (bd <= 0.02) {
             const horiz = ox !== 0;
             ops.push({
               k: 'fill',
@@ -227,35 +234,43 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
               y: sy + (horiz ? 0 : ey),
               w: horiz ? 5 : T,
               h: horiz ? T : 5,
-              r: 34, g: 56, b: 66, a: 0.28,
+              r: 34, g: 56, b: 66, a: 0.18,
             });
           }
         }
       }
       tileCount++;
-      if (kind & 2 && hash2(cfg.seed, tx, ty, 171) > 0.58) {
-        // Pequenas cristas claras se deslocam na direção real do fluxo D8.
-        // A fase depende do tempo e da posição, evitando que toda a água ande junta.
-        const flow = a ? a.chunk.flowDir[a.ci] : -1;
-        const phase = ((opts.timeMs / 150 + hash2(cfg.seed, tx, ty, 172) * 3) % 1 + 1) % 1;
-        const travel = 3 + phase * Math.max(1, T - 9);
-        const streakAlpha = (0.24 + alpha * 0.22) * (snowy ? 0.8 : 1);
-        if (flow === 2 || flow === 6) {
-          const py = flow === 2 ? travel : T - travel - 3;
-          ops.push({ k: 'fill', x: sx + 9, y: sy + py, w: 2, h: 6, r: 218, g: 242, b: 255, a: streakAlpha });
-        } else if (flow === 1 || flow === 5) {
-          const p = flow === 1 ? travel : T - travel - 3;
-          ops.push({ k: 'fill', x: sx + p, y: sy + p, w: 3, h: 3, r: 218, g: 242, b: 255, a: streakAlpha });
-        } else if (flow === 3 || flow === 7) {
-          const p = flow === 3 ? travel : T - travel - 3;
-          ops.push({ k: 'fill', x: sx + p, y: sy + T - p - 4, w: 3, h: 3, r: 218, g: 242, b: 255, a: streakAlpha });
-        } else {
-          const px = flow === 4 ? T - travel - 5 : travel;
-          ops.push({ k: 'fill', x: sx + px, y: sy + 9, w: 6, h: 2, r: 218, g: 242, b: 255, a: streakAlpha });
+      if (speed > 0.015 && d > 0.04) {
+        // filetes na direção e com a intensidade do escoamento real.
+        // A fase avança mais rápido onde a correnteza é mais forte.
+        const ux = vx / speed;
+        const uy = vy / speed;
+        const flowNorm = clamp(speed / 0.1, 0, 1.8);
+        const phaseBase = (opts.timeMs / 1400) * (0.35 + flowNorm * 1.6);
+        const phase = ((phaseBase + hash2(cfg.seed, tx, ty, 172) * 4) % 1 + 1) % 1;
+        const travel = (phase - 0.5) * T * 0.85;
+        const streakAlpha = flowNorm * (0.14 + alpha * 0.26) * (snowy ? 0.8 : 1);
+        const cx = sx + T / 2 + ux * travel;
+        const cy = sy + T / 2 + uy * travel;
+        for (let k = -1; k <= 1; k++) {
+          // três pontos alinhados ao vetor de fluxo (traço curto e coerente)
+          const px = cx + ux * k * 5 + uy * 4;
+          const py = cy + uy * k * 5 - ux * 4;
+          if (px < sx + 1 || py < sy + 1 || px > sx + T - 3 || py > sy + T - 3) continue;
+          ops.push({ k: 'fill', x: px, y: py, w: 2, h: 2, r: 218, g: 242, b: 255, a: streakAlpha });
+        }
+        // espuma: só em correnteza forte com lâmina suficiente
+        if (speed > 0.085 && d > 0.3) {
+          const foam = clamp((speed - 0.085) * 4, 0, 0.3) * (snowy ? 0.8 : 1);
+          const fx = sx + 4 + hash2(cfg.seed, tx, ty, 174) * (T - 10);
+          const fy = sy + 4 + hash2(cfg.seed, ty, tx, 175) * (T - 10);
+          ops.push({ k: 'fill', x: fx, y: fy, w: 3, h: 2, r: 236, g: 249, b: 255, a: foam });
         }
       }
     }
   }
+
+  // ---------- sprites com profundidade  }
 
   // ---------- sprites com profundidade (ordenados por y da base) ----------
   interface Item {
@@ -448,6 +463,11 @@ function heatColor(mode: string, chunk: Chunk, ci: number): [number, number, num
     case 'flow': {
       const t = clamp(Math.log10(1 + chunk.acc[ci]) / 3, 0, 1);
       return [Math.round(40 + t * 215), Math.round(60 + t * 90), Math.round(220)];
+    }
+    case 'current': {
+      const speed = Math.hypot(chunk.flowX[ci], chunk.flowY[ci]);
+      const t = clamp(speed / 2.5, 0, 1);
+      return [Math.round(30 + t * 225), Math.round(90 + t * 40), Math.round(230 - t * 190)];
     }
     case 'soil': {
       const cols: [number, number, number][] = [[230, 200, 120], [170, 90, 50], [130, 130, 130], [70, 120, 60], [150, 130, 90]];

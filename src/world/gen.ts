@@ -10,7 +10,7 @@ import type { WorldConfig } from '../core/config';
 import { hash1, hash2, clamp, smoothstep, lerp } from '../core/rng';
 import { cellToTile } from '../core/coords';
 import { WorldFields, type DeltaAt } from './fields';
-import { solveHydrology } from './hydro';
+import { solveHydrology, DX8, DY8 } from './hydro';
 import { Chunk, SOIL_ALLUVIAL, SOIL_FOREST } from './chunk';
 import { SPECIES, type PlantRecord } from './flora';
 import type { Climate } from './climate';
@@ -80,6 +80,9 @@ export function generateChunk(ctx: GenContext, cx: number, cy: number): Chunk {
       chunk.slope[i] = slope;
       chunk.aspect[i] = aspect;
       chunk.waterDepth[i] = hydro.waterDepth[i];
+      // nível de equilíbrio gerado: a recarga do lençol freático repõe até aqui
+      // (é uma condição inicial física, não uma animação)
+      chunk.waterBase[i] = hydro.waterDepth[i];
       chunk.waterKind[i] = hydro.waterKind[i];
       chunk.acc[i] = hydro.acc[i];
       chunk.flowDir[i] = hydro.flowDir[i];
@@ -109,6 +112,25 @@ export function generateChunk(ctx: GenContext, cx: number, cy: number): Chunk {
       chunk.pH[i] = [6.2, 6.6, 7.2, 5.8, 6.8][soil] + (hash2(cfg.seed, gx, gy, 41) - 0.5) * 0.5;
       chunk.microbe[i] = clamp(0.25 + chunk.moisture[i] * 0.5 + forest * 0.25, 0.05, 1);
       chunk.stress[i] = 0;
+    }
+  }
+
+  // --- peso de nascente: contribuição local do D8 (acc - montante) ----------
+  // A recarga do lençol entra onde a bacia contribui de fato, não em toda a
+  // extensão do rio (senão o mundo recebe uma fonte 20x maior que a chuva).
+  for (let ly = 0; ly < n; ly++) {
+    for (let lx = 0; lx < n; lx++) {
+      const i = chunk.cellIdx(lx, ly);
+      let upstream = 0;
+      for (let d = 0; d < 8; d++) {
+        const nx = lx + DX8[d], ny = ly + DY8[d];
+        if (nx < 0 || ny < 0 || nx >= n || ny >= n) continue;
+        const j = chunk.cellIdx(nx, ny);
+        const nd = chunk.flowDir[j];
+        if (nd < 0) continue;
+        if (nx + DX8[nd] === lx && ny + DY8[nd] === ly) upstream += chunk.acc[j];
+      }
+      chunk.springWeight[i] = Math.max(0, chunk.acc[i] - upstream);
     }
   }
 

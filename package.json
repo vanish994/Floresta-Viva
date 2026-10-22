@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "preview:world": "tsx tools/preview.ts",
+    "scenario:water": "tsx tools/water-scenario.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

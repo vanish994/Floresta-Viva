@@ -37,10 +37,26 @@ export class Chunk {
   elev!: Float32Array;
   slope!: Float32Array;
   aspect!: Float32Array;
+  /** lâmina d'água (m) — variável física, conservada pelo solver */
   waterDepth!: Float32Array;
   waterKind!: Uint8Array;
   acc!: Float32Array;
   flowDir!: Int8Array;
+  /** profundidade de equilíbrio gerada (lago/canal) — alvo da recarga do lençol */
+  waterBase!: Float32Array;
+  /** contribuição local de bacia (acc - montante) — alimenta a nascente */
+  springWeight!: Float32Array;
+  /** água superficial pendente de chuva/escoamento (m) — fonte do solver */
+  surfaceInput!: Float32Array;
+  /** scratch de transferência entre células (m); zerado a cada subpasso */
+  waterDelta!: Float32Array;
+  /** velocidade superficial real do solver (m/s) */
+  flowX!: Float32Array;
+  flowY!: Float32Array;
+  /** horas acumuladas de inundação (para estresse/arrancamento) */
+  floodHours!: Float32Array;
+  /** sedimento suspenso (unidades de elevação normalizada) */
+  sediment!: Float32Array;
 
   // --- solo (por célula) ---
   soilType!: Uint8Array;
@@ -70,11 +86,15 @@ export class Chunk {
 
   /** relógios de simulação deste chunk (horas de jogo), por frequência */
   lastWaterHour = 0;
+  /** relógio do balanço hídrico do solo (frequência própria) */
+  lastSoilHour = 0;
   lastBioHour = 0;
   lastErosionHour = 0;
   dirty = false;
   /** solo modificado pela simulação (precisa ir para o save) */
   soilDirty = false;
+  /** água modificada pela física (precisa ir para o save) */
+  waterDirty = false;
   ready = false;
 
   constructor(cx: number, cy: number, cfg: WorldConfig) {
@@ -95,6 +115,14 @@ export class Chunk {
     this.waterKind = new Uint8Array(c);
     this.acc = new Float32Array(c);
     this.flowDir = new Int8Array(c);
+    this.waterBase = new Float32Array(c);
+    this.springWeight = new Float32Array(c);
+    this.surfaceInput = new Float32Array(c);
+    this.waterDelta = new Float32Array(c);
+    this.flowX = new Float32Array(c);
+    this.flowY = new Float32Array(c);
+    this.floodHours = new Float32Array(c);
+    this.sediment = new Float32Array(c);
     this.soilType = new Uint8Array(c);
     this.soilDepth = new Float32Array(c);
     this.moisture = new Float32Array(c);
@@ -143,5 +171,19 @@ export class Chunk {
   }
   plantsInCell(lx: number, ly: number): PlantRecord[] {
     return this.plantIndex.get(this.cellIdx(lx, ly)) ?? EMPTY;
+  }
+
+  /** volume de água superficial do chunk (m³), usando o lado de célula configurado */
+  waterVolume(cellMeters: number): number {
+    let sum = 0;
+    for (let i = 0; i < this.waterDepth.length; i++) sum += this.waterDepth[i];
+    return sum * cellMeters * cellMeters;
+  }
+
+  /** maior profundidade atual (m) — usado nos relatórios de cenário */
+  maxWaterDepth(): number {
+    let max = 0;
+    for (let i = 0; i < this.waterDepth.length; i++) if (this.waterDepth[i] > max) max = this.waterDepth[i];
+    return max;
   }
 }

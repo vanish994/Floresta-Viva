@@ -65,10 +65,25 @@ export function canopyCoverAt(chunk: Chunk, cfg: WorldConfig, lx: number, ly: nu
   return clamp(cover, 0, 1);
 }
 
-const INFILTRATION = [0.85, 0.45, 0.6, 0.55, 0.35]; // arenoso, argiloso, rochoso, florestal, aluvial
-const RETENTION = [0.45, 0.9, 0.35, 1.15, 0.8];
+/**
+ * Condutividade hidráulica saturada (m de lâmina por hora de jogo) por tipo de
+ * solo. É a mesma tabela usada pelo solver superficial, para que infiltração
+ * no solo e lâmina d'água não tenham duas físicas diferentes.
+ */
+const SOIL_KSAT = [0.12, 0.02, 0.006, 0.05, 0.04];
+/** metros de água por unidade de umidade do solo */
+const SOIL_WATER_CAPACITY = 0.35;
 
-/** passo rápido: chuva, interceptação, infiltração, escoamento, evaporação, transpiração */
+/**
+ * Passo rápido do balanço hídrico do SOLO: chuva → interceptação →
+ * infiltração → escoamento → evaporação/transpiração/percolação.
+ *
+ * A água que não infiltra não é "teleportada" pela direção D8: ela é depositada
+ * em `chunk.surfaceInput` (m) e o solver superficial (`water.ts`) decide para
+ * onde ela escoa, usando a elevação e a profundidade ATUAIS. Isso elimina o
+ * antigo duplo roteamento (stepWater + stepRainwater, removido) e mantém um único
+ * caminho de massa para a água superficial.
+ */
 export function stepWater(
   chunk: Chunk,
   cfg: WorldConfig,
@@ -77,71 +92,47 @@ export function stepWater(
   worldDay: number,
   nb: Neighborhood,
 ): void {
+  void nb; // a água superficial é roteada pelo solver global (entre chunks)
   const n = chunk.n;
-  const rain = climate.rainIntensity(climate.cfg.startDayOfYear + worldDay) * hours * 1.1; // mm等效
-  const gx0 = chunk.cx * n, gy0 = chunk.cy * n;
-  const outflow = new Float32Array(n * n);
+  const rainIntensity = climate.rainIntensity(worldDay);
+  const rainDepth = rainIntensity * cfg.rainPerHour * hours; // m por célula
+  const temp = climate.temperature(worldDay, (worldDay % 1) * 24, 0.3);
+
   for (let ly = 0; ly < n; ly++) {
     for (let lx = 0; lx < n; lx++) {
       const i = chunk.cellIdx(lx, ly);
       const canopy = canopyCoverAt(chunk, cfg, lx, ly, worldDay);
-      const intercepted = rain * canopy * 0.35;
-      const through = rain - intercepted;
+      const through = rainDepth * (1 - canopy * 0.45);
+      const intercepted = rainDepth - through;
+      // 50% da interceptação escorre da copa; o resto evapora antes de chegar
+      const drip = intercepted * 0.5;
+
+      if (chunk.waterDepth[i] > 0.02) {
+        // superfície já inundada: chuva entra direto na lâmina (sem solo)
+        chunk.surfaceInput[i] += through + drip;
+        continue;
+      }
+
       const soil = chunk.soilType[i];
-      const infil = through * INFILTRATION[soil] * clamp(chunk.soilDepth[i], 0.2, 1.4);
-      const runoff = Math.max(0, through - infil);
-      const storage = RETENTION[soil] * chunk.soilDepth[i];
-      let m = chunk.moisture[i] + (infil * 0.06) / storage;
-      // evaporação + transpiração (mais forte com luz/calor e sem cobertura)
-      const temp = climate.temperature(worldDay, (worldDay % 1) * 24, chunk.elev[i] / cfg.elevationRange);
-      const evap = hours * (0.004 + 0.004 * clamp(temp / 30, 0, 1)) * (1 - canopy * 0.6) * (1 - chunk.waterDepth[i]);
-      const transp = hours * 0.006 * canopy * clamp(temp / 25, 0.2, 1.2);
-      m -= evap + transp;
-      // percolação profunda (drenagem) — saída lenta, não some: vira fluxo subterrâneo
-      m -= hours * 0.004 * m * (soil === SOIL_SAND ? 1.6 : soil === SOIL_ROCK ? 1.2 : 0.7);
+      const saturation = clamp(chunk.moisture[i], 0, 1);
+      const infilCapacity =
+        SOIL_KSAT[soil] *
+        hours *
+        (0.4 + 0.6 * clamp(chunk.soilDepth[i] / 1.4, 0, 1)) *
+        (1 - saturation * 0.95);
+      const infiltrated = Math.min(through, Math.max(0, infilCapacity));
+      const runoff = through - infiltrated;
+      // escoamento superficial pendente: o solver o move pela gravidade
+      chunk.surfaceInput[i] += runoff + drip;
+
+      let m = saturation + infiltrated / SOIL_WATER_CAPACITY;
+      // evaporação do solo + transpiração da copa
+      const evap = hours * (0.0009 + 0.0009 * clamp(temp / 30, 0, 1)) * (1 - canopy * 0.6);
+      const transp = hours * 0.0016 * canopy * clamp(temp / 25, 0.2, 1.2);
+      m -= (evap + transp) / SOIL_WATER_CAPACITY;
+      // percolação profunda (saída lenta; não "some" sem registro no balanço)
+      m -= hours * 0.0015 * m * (soil === SOIL_SAND ? 1.6 : soil === SOIL_ROCK ? 1.2 : 0.7);
       chunk.moisture[i] = clamp(m, 0.02, 1);
-      if (runoff > 1e-5) outflow[i] = runoff;
-    }
-  }
-  // roteia o escoamento superficial pela direção de fluxo (D8) — uma passada
-  for (let ly = 0; ly < n; ly++) {
-    for (let lx = 0; lx < n; lx++) {
-      const i = chunk.cellIdx(lx, ly);
-      const r = outflow[i];
-      if (r <= 0) continue;
-      const d = chunk.flowDir[i];
-      if (d < 0) {
-        chunk.waterDepth[i] = Math.min(3.4, chunk.waterDepth[i] + r * 0.004);
-        continue;
-      }
-      const nx = lx + DX8[d], ny = ly + DY8[d];
-      if (nx < 0 || ny < 0 || nx >= n || ny >= n) {
-        // fronteira: entrega ao chunk vizinho se disponível (continuidade)
-        const other = nb.cellAt(gx0 + nx, gy0 + ny);
-        if (other) {
-          const ox = gx0 + nx - other.cx * n, oy = gy0 + ny - other.cy * n;
-          other.waterDepth[other.cellIdx(ox, oy)] = Math.min(3.4, other.waterDepth[other.cellIdx(ox, oy)] + r * 0.004);
-          other.dirty = true;
-        }
-        continue;
-      }
-      const j = chunk.cellIdx(nx, ny);
-      const soil = chunk.soilType[j];
-      const reinfil = r * 0.35 * INFILTRATION[soil];
-      chunk.moisture[j] = clamp(chunk.moisture[j] + (reinfil * 0.06) / RETENTION[soil], 0.02, 1);
-      chunk.waterDepth[j] = Math.min(3.4, chunk.waterDepth[j] + (r - reinfil) * 0.004);
-    }
-  }
-  // lagos/canais relaxam para o nível de equilíbrio sazonal (sem oscilar por frame)
-  const seasonWet = climate.seasonWetness(worldDay);
-  for (let i = 0; i < n * n; i++) {
-    const kind = chunk.waterKind[i];
-    if (kind & 1) {
-      const target = Math.max(0.1, chunk.waterDepth[i] * (0.85 + 0.3 * seasonWet));
-      chunk.waterDepth[i] += (target - chunk.waterDepth[i]) * clamp(hours * 0.02, 0, 0.5);
-    } else if (chunk.waterDepth[i] > 0 && !(kind & 2)) {
-      // água empojada temporária seca
-      chunk.waterDepth[i] = Math.max(0, chunk.waterDepth[i] - hours * 0.02);
     }
   }
   chunk.dirty = true;
@@ -303,11 +294,21 @@ function speciesFitLocal(sp: number, moisture: number, soil: number, light: numb
 }
 
 export interface ErosionSink {
-  addDelta(cellX: number, cellY: number, dNorm: number): void;
+  /** aplica um delta de elevação normalizada e devolve o delta efetivamente aplicado */
+  addDelta(cellX: number, cellY: number, dNorm: number): number;
   getDelta(cellX: number, cellY: number): number;
 }
 
-/** passo lento: erosão, transporte e deposição de sedimentos (escreve deltas persistentes) */
+/**
+ * Passo lento de erosão/deposição acoplado à água REAL.
+ *
+ * A capacidade de transporte usa a velocidade (`flowX/flowY`) e a profundidade
+ * atuais, não a direção D8 estática. O material erodido fica em
+ * `chunk.sediment` (suspenso) e é transportado/ depositado; a soma
+ * `delta de elevação + variação do sedimento` é conservada. Além disso o
+ * `chunk.elev` é atualizado imediatamente, então a deformação aparece no jogo
+ * e não apenas depois de recarregar o chunk.
+ */
 export function stepErosion(
   chunk: Chunk,
   cfg: WorldConfig,
@@ -317,36 +318,102 @@ export function stepErosion(
 ): void {
   const n = chunk.n;
   const gx0 = chunk.cx * n, gy0 = chunk.cy * n;
-  const moves: Array<[number, number, number]> = [];
+  const range = cfg.elevationRange;
+  const moved = new Float32Array(n * n);
+
+  const applyTerrain = (i: number, lx: number, ly: number, dNorm: number): number => {
+    const applied = sink.addDelta(gx0 + lx, gy0 + ly, dNorm);
+    chunk.elev[i] += applied * range;
+    return applied;
+  };
+
+  // --- 1. desagregação pelo cisalhamento da correnteza ---------------------
   for (let ly = 0; ly < n; ly++) {
     for (let lx = 0; lx < n; lx++) {
       const i = chunk.cellIdx(lx, ly);
-      const d = chunk.flowDir[i];
-      if (d < 0) continue;
-      const acc = chunk.acc[i];
+      const depth = chunk.waterDepth[i];
+      if (depth < 0.04) continue;
+      const speed = Math.hypot(chunk.flowX[i], chunk.flowY[i]);
+      if (speed < 0.12) continue;
       const slope = chunk.slope[i];
+      if (slope < 0.02) continue;
       const cover = canopyCoverAt(chunk, cfg, lx, ly, worldDay);
-      const resist = (0.35 + 0.65 * cover) * (chunk.soilType[i] === SOIL_ROCK ? 2.4 : chunk.soilType[i] === SOIL_SAND ? 0.7 : 1);
-      const flow = clamp(acc / cfg.riverThreshold, 0, 4) * clamp(chunk.waterDepth[i] + 0.15, 0, 1.5);
-      const capacity = hours * 0.00002 * flow * slope * (1 / resist);
-      if (capacity <= 1e-7) continue;
-      const nx = lx + DX8[d], ny = ly + DY8[d];
-      const nslope = nx >= 0 && ny >= 0 && nx < n && ny < n ? chunk.slope[chunk.cellIdx(nx, ny)] : slope * 0.5;
-      const deposit = nslope < slope * 0.55 ? 0.7 : nslope < slope ? 0.35 : 0.1; // deposição onde a energia cai
-      moves.push([lx, ly, Math.min(capacity, 0.0006)]);
-      void deposit;
+      const soil = chunk.soilType[i];
+      const resist =
+        (0.35 + 0.65 * cover) * (soil === SOIL_ROCK ? 2.4 : soil === SOIL_SAND ? 0.7 : 1);
+      const shear = (speed - 0.1) ** 2 * clamp(depth, 0, 1.5) * clamp(slope, 0.02, 2.5);
+      let capacity = (hours * 0.00004 * shear) / Math.max(0.2, resist);
+      capacity = Math.min(capacity, 0.0015);
+      if (!(capacity > 1e-9)) continue;
+      const applied = applyTerrain(i, lx, ly, -capacity);
+      if (applied < 0) chunk.sediment[i] = Math.min(2, chunk.sediment[i] - applied);
     }
   }
-  for (const [lx, ly, amount] of moves) {
-    const i = chunk.cellIdx(lx, ly);
-    const d = chunk.flowDir[i];
-    const gx = gx0 + lx, gy = gy0 + ly;
-    sink.addDelta(gx, gy, -amount);
-    const nx = lx + DX8[d], ny = ly + DY8[d];
-    const tgx = gx0 + nx, tgy = gy0 + ny;
-    // parte deposita a jusante, parte segue suspensa (aproximação: 60% deposita)
-    sink.addDelta(tgx, tgy, amount * 0.6);
-    sink.addDelta(tgx + DX8[d], tgy + DY8[d], amount * 0.2);
+
+  // --- 2. transporte do sedimento suspenso + deposição onde a energia cai --
+  // snapshot: uma mesma carga não pode ser transportada duas vezes no passo
+  const sedimentBefore = chunk.sediment.slice();
+  for (let ly = 0; ly < n; ly++) {
+    for (let lx = 0; lx < n; lx++) {
+      const i = chunk.cellIdx(lx, ly);
+      const sediment = sedimentBefore[i];
+      if (sediment <= 1e-9) continue;
+      const depth = chunk.waterDepth[i];
+      const speed = Math.hypot(chunk.flowX[i], chunk.flowY[i]);
+
+      // deposição em água lenta / lâmina rasa
+      if (speed < 0.35) {
+        const depositFactor = clamp((0.35 - speed) / 0.35, 0, 1) * clamp(hours * 0.04, 0, 0.5);
+        const deposit = sediment * depositFactor;
+        if (deposit > 1e-9) {
+          const applied = applyTerrain(i, lx, ly, deposit);
+          if (applied > 0) chunk.sediment[i] = Math.max(0, chunk.sediment[i] - applied);
+        }
+      }
+
+      // transporte a jusante pela direção da velocidade real (fallback D8)
+      const remaining = Math.max(0, sedimentBefore[i] - (sediment - chunk.sediment[i]));
+      if (remaining <= 1e-9) continue;
+      const capacity = hours * 0.0008 * clamp(speed, 0, 3) * clamp(depth + 0.05, 0, 1.2);
+      const amount = Math.min(remaining, capacity);
+      if (amount <= 1e-9) continue;
+      let dx = 0, dy = 0;
+      const vmag = Math.hypot(chunk.flowX[i], chunk.flowY[i]);
+      if (vmag > 1e-6) {
+        dx = chunk.flowX[i] / vmag;
+        dy = chunk.flowY[i] / vmag;
+      } else if (chunk.flowDir[i] >= 0) {
+        const d = chunk.flowDir[i];
+        const dist = (d & 1) === 1 ? Math.SQRT2 : 1;
+        dx = DX8[d] / dist;
+        dy = DY8[d] / dist;
+      }
+      const nx = Math.round(lx + dx);
+      const ny = Math.round(ly + dy);
+      if (nx === lx && ny === ly) continue;
+      if (nx < 0 || ny < 0 || nx >= n || ny >= n) {
+        // borda do chunk: deposita localmente (sem perder sedimento)
+        const applied = applyTerrain(i, lx, ly, amount * 0.5);
+        if (applied > 0) chunk.sediment[i] = Math.max(0, chunk.sediment[i] - applied);
+        continue;
+      }
+      const j = chunk.cellIdx(nx, ny);
+      moved[i] -= amount;
+      moved[j] += amount;
+    }
   }
+  for (let i = 0; i < n * n; i++) {
+    if (moved[i] === 0) continue;
+    const next = chunk.sediment[i] + moved[i];
+    if (next > 4) {
+      // excesso de carga é depositado no próprio local (sem perder massa)
+      const lx = i % n, ly = (i / n) | 0;
+      const applied = applyTerrain(i, lx, ly, next - 4);
+      chunk.sediment[i] = next - Math.max(0, applied);
+    } else {
+      chunk.sediment[i] = Math.max(0, next);
+    }
+  }
+
   chunk.dirty = true;
 }

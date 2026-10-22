@@ -14,8 +14,9 @@ decomposição, erosão, clima, estações) evoluem em frequências separadas do
 ```bash
 npm install
 npm run dev          # abre o jogo (Vite em 0.0.0.0:5173)
-npm test             # 39 testes (determinismo, continuidade, hidrologia, ecologia, tempo, chunks, persistência)
+npm test             # 58 testes (determinismo, continuidade, hidrologia, física da água, ecologia, tempo, chunks, persistência)
 npm run preview:world  # validação visual headless: renderiza PNGs reais + mapas de campos
+npm run scenario:water # cenário reproduzível da física da água (volumes + orçamento)
 npm run build        # typecheck + bundle
 ```
 
@@ -25,6 +26,8 @@ npm run build        # typecheck + bundle
 npx tsx tools/preview.ts --seed 1337 --day 4 --hour 10 --find forest
 npx tsx tools/preview.ts --seed 4242 --day 4 --hour 15 --find river
 npx tsx tools/preview.ts --seed 777  --day 16 --hour 10 --find open   # inverno/neve
+npx tsx tools/preview.ts --seed 1337 --day 4 --hour 10 --find river --sim 8 --rain 1  # enchente
+npx tsx tools/water-scenario.ts --hours 10 --rain 0.02                # balanço de massa
 ```
 
 Gera em `.tmp/previews/` uma cena renderizada com as **mesmas ops de desenho do jogo**
@@ -37,10 +40,11 @@ Exemplos commitados em `docs/imagens/`.
 | tecla | ação |
 | --- | --- |
 | WASD / setas | mover |
-| `Q` | alterna modos de depuração (chunks, elevação, umidade, fluxo, solo, vegetação, água, nutrientes) |
+| `Q` | alterna modos de depuração (chunks, elevação, umidade, fluxo, correnteza, solo, vegetação, água, nutrientes) |
 | `P` | pausa o relógio do mundo |
 | `F` | derruba a árvore mais próxima (vira liteira; efeito ecológico real) |
 | `G` | planta uma muda da espécie mais adequada ao solo local |
+| `🌧 chuva` | força chuva máxima (para ver o nível dos rios subir e transbordar) |
 | botões do HUD | novo mundo (seed), salvar, debug, pausa, trocar personagem |
 
 O jogo salva automaticamente a cada 20 s em `localStorage` (diffs, não o mundo inteiro).
@@ -64,9 +68,15 @@ O jogo é jogável no celular (toque), não só no desktop:
 - **Chunks determinísticos** por seed + coordenadas globais, com lookahead de movimento,
   orçamento de geração por frame e descarregamento por distância.
 - **Relevo** com contraste de vales/montanhas, hillshade e tiles de penhasco reais.
-- **Hidrologia**: D8 sobre potencial hidráulico, acumulação multi-escala (bacias distantes
-  semeiam o anel do chunk), lagos por lençol freático climático, rios com largura por vazão,
-  margens alargadas por cota, escoamento superficial roteado entre chunks.
+- **Hidrologia gerada**: D8 sobre potencial hidráulico, acumulação multi-escala (bacias
+  distantes semeiam o anel do chunk), lagos por lençol freático climático, rios com
+  largura por vazão, margens alargadas por cota.
+- **Física real da água**: volume por célula (`waterDepth`, m) escoando por gravidade
+  (Manning sobre `elev + depth`), com conservação de massa, buffers de transferência,
+  fluxo entre chunks, subpassos fixos (independentes de FPS), chuva → infiltração →
+  escoamento, nascentes, evaporação, drenagem e orçamento separado por processo.
+  Lagos enchem e transbordam, rios alargam em enchentes, poças secam e a correnteza
+  arranca árvores vulneráveis. Ver [`docs/FISICA_DA_AGUA.md`](docs/FISICA_DA_AGUA.md).
 - **Solo vivo**: textura (arenoso/argiloso/rochoso/florestal/aluvial), profundidade, umidade,
   liteira, húmus, N/P/K, pH, atividade microbiana, estresse hídrico — com balanço de massa
   fechado (mineralização, imobilização, intemperismo de P, lixiviação).
@@ -80,12 +90,13 @@ O jogo é jogável no celular (toque), não só no desktop:
 - **Fauna**: modelo de atividade (alimento/água/abrigo/hora/estação) que já alimenta a
   dispersão de sementes; interfaces `FaunaAgent`/`FaunaSystem` para agentes visuais futuros.
 - **Persistência** versionada em `localStorage` com diffs (plantas removidas/recrutadas,
-  solo quantizado, deltas de terreno, relógio, posição).
+  solo quantizado, deltas de terreno, lâmina e velocidade da água, relógio, posição).
 
 ## Documentos
 
 - `docs/ARQUITETURA.md` — decisões técnicas e fluxo de dados.
 - `docs/PARAMETROS.md` — todos os parâmetros configuráveis e traços das espécies.
+- `docs/FISICA_DA_AGUA.md` — física da água: modelo, conservação, testes, limitações.
 - `docs/RELATORIO_FINAL.md` — relatório final pedido pelo prompt (testes, limitações, pendências).
 - `docs/PROMPT_MUNDO_PROCEDURAL_FLORESTA_VIVA.md` — o prompt original do projeto.
 
