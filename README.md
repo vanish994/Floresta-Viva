@@ -45,6 +45,20 @@ Exemplos commitados em `docs/imagens/`.
 
 O jogo salva automaticamente a cada 20 s em `localStorage` (diffs, não o mundo inteiro).
 
+## Mobile first
+
+O jogo é jogável no celular (toque), não só no desktop:
+
+- **Joystick virtual** no canto inferior esquerdo (aparece só em dispositivos de toque,
+  `src/game/touch.ts`) e botões **F** (derrubar) / **G** (plantar) no canto inferior direito.
+- **HUD recolhível**: em telas pequenas ele abre colapsado (só o relógio) com botão `+/–`
+  para expandir; sem scroll, sem zoom (`user-scalable=no`, `viewport-fit=cover`).
+- **Orçamento de performance** em telas pequenas: raio de carga de 2 chunks
+  (vs. 3 no desktop) e 1 chunk gerado por frame, para manter o frame estável.
+- **Build relativo** (`base: './'` + sprites como `publicDir`): o mesmo `dist/` funciona
+  na raiz ou em subpath (ex.: GitHub Pages em `/Floresta-Viva/`) — os sprites são
+  copiados para a raiz do `dist/` e referenciados por caminho relativo.
+
 ## O que existe de fato
 
 - **Chunks determinísticos** por seed + coordenadas globais, com lookahead de movimento,

@@ -99,6 +99,24 @@ clockMinutes, player, deltas, chunks{removed, recruits, soil quantizado}}`.
 Load seguro: versão/seed/gerador conferidos; diffs aplicados quando o chunk é gerado
 (`world.onChunkGenerated`).
 
+## Camada de jogo e mobile (`src/game/`, `src/main.ts`)
+
+- `input.ts`: teclado (eixos WASD/setas, ações F/G/Q/P).
+- `touch.ts`: joystick virtual + botões F/G via Pointer Events; só é exibido com
+  `pointer: coarse`. O loop soma/prioriza o eixo de toque sobre o do teclado.
+- `main.ts`: HUD DOM, autosave, e ajustes mobile-first (HUD colapsado em telas
+  pequenas, `loadRadiusChunks: 2` quando `min(viewport) < 560 px`).
+- Spawn (`world.findSpawn`): varre anéis ao redor da origem e escolhe o ponto
+  caminhável com maior `forestDensity` (penalidade leve de distância), para o
+  jogador nascer dentro de um bosque de verdade.
+
+## Deploy (`vite.config.ts`)
+
+- `base: './'`: URLs relativas → o `dist/` serve em qualquer subpath (GitHub Pages).
+- `publicDir: 'assets'`: os sprites são copiados para a raiz do `dist/` e o
+  `CanvasRenderer` os carrega com base `'./'` (idem no dev server).
+- `build.assetsDir: 'bundle'`: evita colisão de nome com a pasta pública `assets/`.
+
 ## Fauna (`src/world/fauna.ts`)
 
 Sem sprites de animais no pacote ⇒ nada de fauna visual falsa. Existe um modelo
