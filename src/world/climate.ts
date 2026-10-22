@@ -18,6 +18,8 @@ export type Season = (typeof SEASONS)[number];
 
 const DEG = Math.PI / 180;
 
+type RainGlobal = typeof globalThis & { __florestaRainOverride?: boolean };
+
 export interface SkyState {
   /** elevação solar (seno) */
   sinElevation: number;
@@ -107,6 +109,7 @@ export class Climate {
 
   /** intensidade de chuva agora [0..1] — feixes de chuva determinísticos por dia/hora */
   rainIntensity(dayFloat: number): number {
+    if ((globalThis as RainGlobal).__florestaRainOverride) return 1;
     const t = dayFloat;
     const spell = this.noise.fbm2(t * 0.55, 7.7, 3, 0.55, 2.1, 3) * 0.5 + 0.5;
     const gate = smoothstep(0.55, 0.72, spell);
