@@ -62,8 +62,11 @@ export class CanvasRenderer {
           };
           img.src = url;
         };
+        // Codifica cada segmento do caminho para suportar %, &, espaços etc.
+        // sem alterar as barras que separam as pastas.
+        const encodedPath = f.split('/').map((segment) => encodeURIComponent(segment)).join('/');
         // versão do build na query: deploy novo nunca reusa sprite cacheado
-        fetchSprite(`${base}${f}?v=${BUILD_ID}`, true);
+        fetchSprite(`${base}${encodedPath}?v=${BUILD_ID}`, true);
       }
     });
   }
