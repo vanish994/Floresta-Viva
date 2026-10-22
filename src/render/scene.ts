@@ -204,6 +204,15 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
         const deep = SPRITES.water_deep.frames[frameIdx];
         ops.push({ k: 'blit', img: SPRITES.water_deep.file, sx: deep[0], sy: deep[1], sw: deep[2], sh: deep[3], dx: sx, dy: sy, dw: T, dh: T, alpha: deepA });
       }
+      // Profundidade legível: água rasa mantém o brilho; água funda ganha
+      // uma camada azul-escura e uma faixa de luz na superfície.
+      if (d > 0.28) {
+        const depthShade = smoothstepLocal(0.28, 1.5, d);
+        ops.push({ k: 'fill', x: sx, y: sy, w: T, h: T, r: 5, g: 28, b: 58, a: depthShade * 0.34 });
+        if (d > 0.85 && hash2(cfg.seed, tx, ty, 173) > 0.66) {
+          ops.push({ k: 'fill', x: sx + 3, y: sy + 4, w: Math.max(4, T - 8), h: 1, r: 190, g: 226, b: 245, a: 0.14 + depthShade * 0.12 });
+        }
+      }
       // linha d'água: escurece a borda do lado da terra
       if (alpha > 0.15) {
         const nbs: Array<[number, number, number, number]> = [[1, 0, 0, 0], [-1, 0, T - 5, 0], [0, 1, 0, 0], [0, -1, 0, T - 5]];
