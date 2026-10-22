@@ -41,10 +41,7 @@ export const TREE_FILES = {
 };
 
 export const CLIFF_SOUTH: Rect[] = [[128, 417, 32, 31], [224, 417, 32, 31], [256, 417, 32, 31], [288, 417, 32, 31], [320, 417, 32, 31], [352, 417, 32, 31], [384, 417, 32, 31], [416, 417, 32, 31], [448, 417, 32, 31], [480, 417, 32, 31], [512, 417, 32, 31], [544, 417, 32, 31], [576, 417, 32, 31], [608, 417, 32, 31], [640, 417, 32, 31], [672, 417, 32, 31], [768, 417, 32, 31]];
-// Os recortes diagonais antigos produziam triângulos roxos em grade.
-// Mantemos a geração dos flags no mundo, mas não desenhamos esses recortes
-// até que o atlas de cantos seja mapeado com transparência e escala corretas.
-export const CLIFF_DIAG: Rect[] = [];
+export const CLIFF_DIAG: Rect[] = [[101, 320, 27, 28], [800, 320, 27, 26], [133, 352, 27, 27], [768, 352, 27, 27], [168, 384, 24, 27], [197, 416, 27, 27]];
 export const CLIFF_PLATEAU: Rect = [480, 193, 32, 31];
 
 const F = (file: string, frames: Rect[], anchor: 'bottom' | 'tile' = 'bottom', frameMs?: number): SpriteDef =>
