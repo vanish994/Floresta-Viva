@@ -43,6 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     steps:
+      # Deploy after every successful main build.
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
