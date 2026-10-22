@@ -5,11 +5,16 @@
  */
 import type { Op } from './ops';
 import { sanitizeShadow } from './sanitize';
+import { BUILD_ID } from '../core/build';
 
 export class CanvasRenderer {
   private images = new Map<string, HTMLCanvasElement>();
   private pending = 0;
   ready = false;
+
+  /** sprites carregados / falhas (para diagnóstico no HUD) */
+  loadedCount = 0;
+  failedFiles: string[] = [];
 
   load(files: string[], base = './'): Promise<void> {
     this.pending = files.length;
@@ -27,8 +32,9 @@ export class CanvasRenderer {
         }
       };
       for (const f of files) {
-        const img = new Image();
-        img.onload = () => {
+        const fetchSprite = (url: string, retry: boolean) => {
+          const img = new Image();
+          img.onload = () => {
           try {
             const cv = document.createElement('canvas');
             cv.width = img.naturalWidth;
@@ -42,10 +48,22 @@ export class CanvasRenderer {
           } catch {
             /* mantém sem sanitizar se algo falhar */
           }
-          done();
+            this.loadedCount++;
+            done();
+          };
+          img.onerror = () => {
+            // 404 cacheado no celular é teimoso: tenta 1x com cache-buster
+            if (retry) {
+              fetchSprite(`${url}${url.includes('?') ? '&' : '?'}cb=${Date.now()}`, false);
+            } else {
+              this.failedFiles.push(f);
+              done();
+            }
+          };
+          img.src = url;
         };
-        img.onerror = done;
-        img.src = base + f;
+        // versão do build na query: deploy novo nunca reusa sprite cacheado
+        fetchSprite(`${base}${f}?v=${BUILD_ID}`, true);
       }
     });
   }

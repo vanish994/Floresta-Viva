@@ -110,10 +110,27 @@ if (isSmallScreen()) {
 }
 window.addEventListener('beforeunload', () => saveWorld(world));
 
-const assetBase = `${import.meta.env.BASE_URL}assets/`;
+// publicDir 'assets' => sprites servidos na RAIZ do site (dev e dist), não em /assets/
+const assetBase = './';
+const spriteTotal = allAssetFiles().length;
 renderer.load(allAssetFiles(), assetBase).then(() => {
   el('loading').style.display = 'none';
+  if (renderer.failedFiles.length > 0) showSpriteError(renderer.failedFiles.length);
   requestAnimationFrame(loop);
+});
+
+/** aviso honesto se algum sprite não baixar (em vez de quadrados mudos) */
+function showSpriteError(n: number) {
+  const box = document.createElement('div');
+  box.id = 'sprite-error';
+  box.innerHTML = `<p>não consegui baixar ${n} sprite(s).<br/>toque para recarregar.</p>`;
+  box.addEventListener('pointerdown', () => location.reload());
+  document.body.appendChild(box);
+}
+
+// aba restaurada do bfcache (celular: voltar ao app depois de horas) => reload
+window.addEventListener('pageshow', (e) => {
+  if (e.persisted) location.reload();
 });
 
 let last = performance.now();
@@ -227,7 +244,8 @@ function updateHud(ops: number) {
   el('hud-season').textContent = `${SEASONS[season]} · ${world.climate.dayOfSeason(c.dayFloat).toFixed(0)}º dia`;
   el('hud-temp').textContent = `${temp.toFixed(1)} °C · ${rain > 0.4 ? 'chuva' : rain > 0.1 ? 'garoa' : 'céu limpo'}`;
   el('hud-seed').textContent = `seed ${world.cfg.seed}`;
-  el('hud-perf').textContent = `${fps.toFixed(0)} fps · ${world.chunks.size} chunks · ${world.stats.plants} plantas · ${ops} ops · gen ${world.stats.genMs.toFixed(1)} ms · sim ${world.stats.simMs.toFixed(1)} ms`;
+  const spr = renderer.failedFiles.length > 0 ? ` · sprites ${renderer.loadedCount}/${spriteTotal} ⚠${renderer.failedFiles.length}` : ` · sprites ${renderer.loadedCount}/${spriteTotal}`;
+  el('hud-perf').textContent = `${fps.toFixed(0)} fps · ${world.chunks.size} chunks · ${world.stats.plants} plantas · ${ops} ops · gen ${world.stats.genMs.toFixed(1)} ms · sim ${world.stats.simMs.toFixed(1)} ms${spr}`;
   el('hud-debug').textContent = DEBUG_MODES[debugIdx] ? `debug: ${DEBUG_MODES[debugIdx]}` : 'debug: off (Q alterna)';
   void Climate;
 }
