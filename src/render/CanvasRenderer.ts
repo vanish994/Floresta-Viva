@@ -11,7 +11,7 @@ export class CanvasRenderer {
   private pending = 0;
   ready = false;
 
-  load(files: string[], base = './assets/'): Promise<void> {
+  load(files: string[], base = './'): Promise<void> {
     this.pending = files.length;
     return new Promise((resolve) => {
       if (files.length === 0) {

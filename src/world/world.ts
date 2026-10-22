@@ -73,23 +73,38 @@ export class World implements Neighborhood, ErosionSink {
     return this.getChunk(cx, cy) ?? null;
   }
 
-  /** ponto de partida seguro: procura terra firme perto da origem */
+  /**
+   * Ponto de partida: terra firme, caminhável e DENTRO de floresta densa
+   * (primeira impressão importa); relaxa progressivamente se não houver.
+   */
   findSpawn(): { x: number; y: number } {
     const cfg = this.cfg;
     const cellPx = cfg.simCellTiles * cfg.tileSize;
-    for (let r = 0; r < 40; r++) {
-      for (let a = 0; a < 12; a++) {
-        const cx = Math.round(Math.cos((a / 12) * Math.PI * 2) * r);
-        const cy = Math.round(Math.sin((a / 12) * Math.PI * 2) * r);
+    const wet = this.climate.meanWetness();
+    let bestScore = -Infinity;
+    let bx = 0, by = 0;
+    for (let r = 0; r < 72; r++) {
+      const steps = Math.max(16, r * 4); // densidade angular constante
+      for (let a = 0; a < steps; a++) {
+        const cx = Math.round(Math.cos((a / steps) * Math.PI * 2) * r);
+        const cy = Math.round(Math.sin((a / steps) * Math.PI * 2) * r);
         const e = this.fields.elevationBase(cx, cy);
-        const wt = this.fields.waterTable(cx, cy, this.climate.meanWetness());
+        const wt = this.fields.waterTable(cx, cy, wet);
         const slope = this.fields.slopeAspect(cx, cy).slope;
-        if (e > wt + 0.05 && slope < 1.4) {
-          return { x: cx * cellPx + cellPx / 2, y: cy * cellPx + cellPx / 2 };
+        if (e <= wt + 0.06 || slope >= 1.4) continue;
+        const forest = this.fields.forestDensity(cx, cy, wet);
+        // floresta pesa mais que distância (penalidade leve): o jogador
+        // nasce DENTRO de um bosque sempre que existir um alcançável
+        const score = forest * 2 - r * 0.012 + (this.fields.trailField(cx, cy) > 0.4 ? 0.2 : 0);
+        if (score > bestScore) {
+          bestScore = score;
+          bx = cx;
+          by = cy;
         }
       }
+      if (bestScore > 1.3) break; // já achou um bom bosque perto
     }
-    return { x: 0, y: 0 };
+    return { x: bx * cellPx + cellPx / 2, y: by * cellPx + cellPx / 2 };
   }
 
   /** pede o carregamento dos chunks ao redor do personagem (com lookahead) */

@@ -1,9 +1,10 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  // Caminho do projeto no GitHub Pages: https://vanish994.github.io/Floresta-Viva/
-  base: '/Floresta-Viva/',
-  // Os sprites do jogo ficam em /assets e precisam ser copiados para o build.
+  // base relativo: o build funciona em qualquer subpath (GitHub Pages: /Floresta-Viva/)
+  base: './',
+  // os sprites do pacote são servidos como arquivos públicos (copiados para a
+  // raiz do dist em build e servidos na raiz no dev)
   publicDir: 'assets',
   server: {
     host: '0.0.0.0',
@@ -14,5 +15,9 @@ export default defineConfig({
     host: '0.0.0.0',
     allowedHosts: true,
   },
-  build: { target: 'es2022' },
+  build: {
+    target: 'es2022',
+    // evita colidir com a pasta de sprites (dist/assets → dist/bundle)
+    assetsDir: 'bundle',
+  },
 });

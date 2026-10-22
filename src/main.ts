@@ -6,6 +6,7 @@ import { World } from './world/world';
 import { Climate, SEASONS } from './world/climate';
 import { Player } from './game/player';
 import { Input } from './game/input';
+import { TouchControls } from './game/touch';
 import { CanvasRenderer } from './render/CanvasRenderer';
 import { composeScene, type DebugMode } from './render/scene';
 import { allAssetFiles } from './render/manifest';
@@ -30,19 +31,29 @@ let lastSave = 0;
 let fps = 60;
 
 const renderer = new CanvasRenderer();
+const touch = new TouchControls();
+
+const isSmallScreen = () => Math.min(window.innerWidth, window.innerHeight) < 560;
 
 function resize() {
-  const dpr = 1; // pixel art: 1 px de jogo = 1 px de tela
-  canvas.width = Math.floor(window.innerWidth * dpr);
-  canvas.height = Math.floor(window.innerHeight * dpr);
-  canvas.style.width = `${window.innerWidth}px`;
-  canvas.style.height = `${window.innerHeight}px`;
+  // pixel art: 1 px de jogo = 1 px CSS (sem DPR: performance em mobile)
+  const w = window.visualViewport ? window.visualViewport.width : window.innerWidth;
+  const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+  canvas.width = Math.max(320, Math.floor(w));
+  canvas.height = Math.max(240, Math.floor(h));
+  canvas.style.width = `${canvas.width}px`;
+  canvas.style.height = `${canvas.height}px`;
 }
 window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 120));
+window.visualViewport?.addEventListener('resize', resize);
 resize();
 
 function createWorld(seed: number, load: boolean) {
-  world = new World({ seed });
+  // mobile first: mundo menor carregado em telas pequenas (menos memória/CPU)
+  world = new World(
+    isSmallScreen() ? { seed, loadRadiusChunks: 2, lookaheadChunks: 1, maxChunkGenPerFrame: 1 } : { seed },
+  );
   world.onChunkGenerated = (c) => applyChunkDiffs(world, c);
   player = new Player();
   if (load) {
@@ -87,6 +98,16 @@ document.getElementById('btn-pause')!.addEventListener('click', () => {
 document.getElementById('btn-char')!.addEventListener('click', () => {
   player.female = !player.female;
 });
+const hud = document.getElementById('hud')!;
+const btnHud = document.getElementById('btn-hud')!;
+btnHud.addEventListener('click', () => {
+  hud.classList.toggle('collapsed');
+  btnHud.textContent = hud.classList.contains('collapsed') ? '+' : '–';
+});
+if (isSmallScreen()) {
+  hud.classList.add('collapsed');
+  btnHud.textContent = '+';
+}
 window.addEventListener('beforeunload', () => saveWorld(world));
 
 const assetBase = `${import.meta.env.BASE_URL}assets/`;
@@ -106,10 +127,12 @@ function loop(now: number) {
   // teclas de ação
   if (input.consume('KeyQ')) debugIdx = (debugIdx + 1) % DEBUG_MODES.length;
   if (input.consume('KeyP')) world.clock.paused = !world.clock.paused;
-  if (input.consume('KeyF')) cutTree();
-  if (input.consume('KeyG')) plantSeedling();
+  if (input.consume('KeyF') || touch.consumeCut()) cutTree();
+  if (input.consume('KeyG') || touch.consumePlant()) plantSeedling();
 
-  const axis = input.axis();
+  const kb = input.axis();
+  const tAxis = touch.state.axis;
+  const axis = tAxis.x !== 0 || tAxis.y !== 0 ? tAxis : kb;
   player.update(world, dt, axis);
   world.requestChunks(player.x, player.y, player.vx, player.vy);
   world.pumpGeneration();
