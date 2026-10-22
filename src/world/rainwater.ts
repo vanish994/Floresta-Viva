@@ -21,7 +21,6 @@ export function stepRainwater(chunk: Chunk, cfg: WorldConfig, climate: Climate, 
   const storm = rain <= STORM_START ? 0 : (rain - STORM_START) / (1 - STORM_START);
   const added = new Float32Array(count);
 
-  // Chuva moderada também alimenta os canais; tempestades acrescentam mais água.
   if (rain > 0.05) {
     for (let ly = 0; ly < n; ly++) {
       for (let lx = 0; lx < n; lx++) {
@@ -51,22 +50,23 @@ export function stepRainwater(chunk: Chunk, cfg: WorldConfig, climate: Climate, 
     if (added[i] > 0) chunk.waterDepth[i] = Math.min(MAX_TEMPORARY_DEPTH, chunk.waterDepth[i] + added[i]);
   }
 
-  // Correnteza com efeito real: transporta parte da lâmina para jusante usando
-  // a direção D8, com velocidade maior em canais profundos e de grande vazão.
-  // O snapshot evita que a ordem de varredura mova a mesma água várias vezes.
+  // Transporta água de verdade pela direção D8. O fator temporal mantém a
+  // velocidade equivalente entre passos, mas responde mais cedo ao jogador.
   const before = chunk.waterDepth.slice();
   const delta = new Float32Array(count);
+  const timeScale = Math.min(1, Math.max(0, hours / 0.5));
   for (let ly = 0; ly < n; ly++) {
     for (let lx = 0; lx < n; lx++) {
       const i = chunk.cellIdx(lx, ly);
       const flow = chunk.flowDir[i];
-      if (flow < 0 || before[i] < 0.08) continue;
+      if (flow < 0 || before[i] < 0.035) continue;
       const nx = lx + DX8[flow], ny = ly + DY8[flow];
       if (nx < 0 || ny < 0 || nx >= n || ny >= n) continue;
       const j = chunk.cellIdx(nx, ny);
       const downhill = Math.max(0, chunk.elev[i] - chunk.elev[j]);
-      const discharge = Math.min(0.38, 0.07 + Math.min(0.18, chunk.acc[i] / Math.max(1, cfg.riverThreshold) * 0.08)
-        + Math.min(0.13, before[i] * 0.08 + downhill * 0.025));
+      const channel = Math.min(0.18, chunk.acc[i] / Math.max(1, cfg.riverThreshold) * 0.12);
+      const depthForce = Math.min(0.22, before[i] * 0.16 + downhill * 0.04);
+      const discharge = Math.min(0.65, (0.12 + channel + depthForce) * timeScale * 2.2);
       const transported = Math.min(before[i] * discharge, Math.max(0, MAX_TEMPORARY_DEPTH - before[j]));
       delta[i] -= transported;
       delta[j] += transported;
@@ -76,7 +76,7 @@ export function stepRainwater(chunk: Chunk, cfg: WorldConfig, climate: Climate, 
     chunk.waterDepth[i] = Math.max(0, Math.min(MAX_TEMPORARY_DEPTH, chunk.waterDepth[i] + delta[i]));
   }
 
-  // Transbordamento: excesso de água escapa para vizinhos mais baixos.
+  // Água acumulada transborda para a célula vizinha mais baixa.
   if (storm > 0.05) {
     const overflow = new Float32Array(count);
     for (let ly = 0; ly < n; ly++) {
@@ -99,7 +99,7 @@ export function stepRainwater(chunk: Chunk, cfg: WorldConfig, climate: Climate, 
           if (nx >= 0 && ny >= 0 && nx < n && ny < n) best = chunk.cellIdx(nx, ny);
         }
         if (best >= 0) {
-          const moved = Math.min(excess * (0.12 + storm * 0.2), 0.2);
+          const moved = Math.min(excess * (0.12 + storm * 0.2) * timeScale * 2.2, 0.2);
           overflow[i] -= moved;
           overflow[best] += moved;
         }
@@ -110,8 +110,8 @@ export function stepRainwater(chunk: Chunk, cfg: WorldConfig, climate: Climate, 
     }
   }
 
-  // Enchente forte e corrente rápida podem derrubar árvores vulneráveis.
-  // A remoção entra no conjunto persistente de diffs e atualiza o índice espacial.
+  // Correnteza forte e água profunda podem arrancar árvores, sem torná-las
+  // frágeis demais em condições normais.
   let uprooted = false;
   for (const plant of chunk.livePlants()) {
     const lx = Math.min(n - 1, Math.max(0, Math.floor(plant.x / (cfg.simCellTiles * cfg.tileSize)) - chunk.cx * n));
@@ -125,10 +125,8 @@ export function stepRainwater(chunk: Chunk, cfg: WorldConfig, climate: Climate, 
       * Math.min(1.5, depth);
     const vulnerability = 1 - sp.floodTolerance;
     if (currentStrength < 0.62 || vulnerability <= 0.05) continue;
-    // Probabilidade baixa por passo; sobe com profundidade/velocidade e cai
-    // para espécies adaptadas a margens alagáveis e árvores de raízes profundas.
     const rootProtection = Math.min(0.55, sp.rootDepth * 0.28);
-    const chance = Math.min(0.28, hours * 0.006 * vulnerability * currentStrength * (1 - rootProtection));
+    const chance = Math.min(0.28, hours * 0.04 * vulnerability * currentStrength * (1 - rootProtection));
     const roll = hashPlant(plant.id, Math.floor(worldDay * 24), chunk.cx, chunk.cy);
     if (roll < chance) {
       chunk.removedPlants.add(plant.id);
@@ -138,6 +136,7 @@ export function stepRainwater(chunk: Chunk, cfg: WorldConfig, climate: Climate, 
   }
   if (uprooted) chunk.rebuildPlantIndex();
   chunk.dirty = true;
+  chunk.soilDirty = true;
 }
 
 function hashPlant(id: number, step: number, cx: number, cy: number): number {
