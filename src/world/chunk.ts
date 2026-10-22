@@ -57,9 +57,31 @@ export class Chunk {
   floodHours!: Float32Array;
   /** sedimento suspenso (unidades de elevação normalizada) */
   sediment!: Float32Array;
+  /** snapshot da carga suspensa no início do subpasso (transporte conservativo) */
+  sedimentScratch!: Float32Array;
+  /** variação de carga a aplicar no fim do subpasso */
+  sedimentDelta!: Float32Array;
+  /** marca células cuja elevação mudou no subpasso (recalcular declive) */
+  terrainDirty!: Uint8Array;
+  /** cache de cobertura de copa/raízes (reconstruído quando a vegetação muda) */
+  coverCache?: Float32Array;
+  rootCache?: Float32Array;
+  coverStamp = -1;
 
   // --- solo (por célula) ---
   soilType!: Uint8Array;
+  /** textura gerada (restaurada quando a areia se estabiliza) */
+  soilBase!: Uint8Array;
+  /** fração de areia da superfície (0..1) — estado físico da margem */
+  sand!: Float32Array;
+  /** espessura (m) do depósito arenoso superficial acumulado pela água */
+  sandLayer!: Float32Array;
+  /** fração de areia do material de origem (determinística da geração) */
+  sandBase!: Float32Array;
+  /** horas acumuladas de contato com a água (memória do litoral) */
+  shoreHours!: Float32Array;
+  /** cooldown de classificação do solo (evita oscilação areia↔terra) */
+  soilCooldown!: Float32Array;
   soilDepth!: Float32Array;
   moisture!: Float32Array; // 0..1
   litter!: Float32Array; // matéria orgânica fresca (kg/m² relativo)
@@ -90,6 +112,7 @@ export class Chunk {
   lastSoilHour = 0;
   lastBioHour = 0;
   lastErosionHour = 0;
+  lastBankHour = 0;
   dirty = false;
   /** solo modificado pela simulação (precisa ir para o save) */
   soilDirty = false;
@@ -123,7 +146,16 @@ export class Chunk {
     this.flowY = new Float32Array(c);
     this.floodHours = new Float32Array(c);
     this.sediment = new Float32Array(c);
+    this.sedimentScratch = new Float32Array(c);
+    this.sedimentDelta = new Float32Array(c);
+    this.terrainDirty = new Uint8Array(c);
     this.soilType = new Uint8Array(c);
+    this.soilBase = new Uint8Array(c);
+    this.sand = new Float32Array(c);
+    this.sandLayer = new Float32Array(c);
+    this.sandBase = new Float32Array(c);
+    this.shoreHours = new Float32Array(c);
+    this.soilCooldown = new Float32Array(c);
     this.soilDepth = new Float32Array(c);
     this.moisture = new Float32Array(c);
     this.litter = new Float32Array(c);
@@ -156,6 +188,8 @@ export class Chunk {
   plantIndex = new Map<number, PlantRecord[]>();
   rebuildPlantIndex(): void {
     this.plantIndex.clear();
+    // vegetação mudou: os mapas de copa/raízes usados pela erosão são inválidos
+    this.coverStamp = -1;
     const cellPx = (this.tiles * 32) / this.n;
     const add = (p: PlantRecord) => {
       if (this.removedPlants.has(p.id)) return;
@@ -178,6 +212,13 @@ export class Chunk {
     let sum = 0;
     for (let i = 0; i < this.waterDepth.length; i++) sum += this.waterDepth[i];
     return sum * cellMeters * cellMeters;
+  }
+
+  /** quantidade de células classificadas como areia (relatórios/HUD) */
+  sandCells(): number {
+    let count = 0;
+    for (let i = 0; i < this.soilType.length; i++) if (this.soilType[i] === SOIL_SAND) count++;
+    return count;
   }
 
   /** maior profundidade atual (m) — usado nos relatórios de cenário */

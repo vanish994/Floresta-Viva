@@ -11,6 +11,7 @@ import { hash1, hash2, clamp, smoothstep, lerp } from '../core/rng';
 import { cellToTile } from '../core/coords';
 import { WorldFields, type DeltaAt } from './fields';
 import { solveHydrology, DX8, DY8 } from './hydro';
+import { sandBaseOf } from './sediment';
 import { Chunk, SOIL_ALLUVIAL, SOIL_FOREST } from './chunk';
 import { SPECIES, type PlantRecord } from './flora';
 import type { Climate } from './climate';
@@ -95,6 +96,11 @@ export function generateChunk(ctx: GenContext, cx: number, cy: number): Chunk {
       if (nearWater) soil = SOIL_ALLUVIAL;
       else if (forest > 0.5 && parent !== 2) soil = SOIL_FOREST;
       chunk.soilType[i] = soil;
+      // textura de origem + fração de areia inicial: a morfologia parte daqui
+      // e nunca "inventa" areia sem sedimentos (ver sediment.ts)
+      chunk.soilBase[i] = soil;
+      chunk.sandBase[i] = sandBaseOf(soil);
+      chunk.sand[i] = chunk.sandBase[i];
       chunk.soilDepth[i] = fields.soilDepth(gx, gy) + (soil === SOIL_ALLUVIAL ? 0.3 : 0);
 
       // umidade inicial: proximidade do lençol + retenção do solo

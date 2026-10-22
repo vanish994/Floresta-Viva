@@ -12,6 +12,7 @@
     "test:watch": "vitest",
     "preview:world": "tsx tools/preview.ts",
     "scenario:water": "tsx tools/water-scenario.ts",
+    "scenario:erosion": "tsx tools/erosion-scenario.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

@@ -18,7 +18,8 @@ import type { Op, SceneOps } from './ops';
 import { SEASONS } from '../world/climate';
 
 export type DebugMode =
-  | null | 'chunks' | 'elevation' | 'moisture' | 'flow' | 'current' | 'soil' | 'veg' | 'water' | 'nutrients';
+  | null | 'chunks' | 'elevation' | 'moisture' | 'flow' | 'current' | 'soil' | 'veg' | 'water'
+  | 'sand' | 'sediment' | 'nutrients';
 
 export interface Camera {
   x: number;
@@ -92,12 +93,31 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
       const soil = chunk.soilType[ci];
       const moist = chunk.moisture[ci];
       const depth = chunk.waterDepth[ci];
+      const sand = chunk.sand[ci];
+      // areia é um ESTADO FÍSICO contínuo (fração de areia da superfície): o
+      // chão recebe uma camada de areia com alpha proporcional, com variação
+      // por tile apenas para dar textura — sem trocar o tile inteiro, o que
+      // produzia um xadrez de areia/grama.
+      // legibilidade: um depósito arenoso de 2 cm já tinge a margem; areia
+      // classificada (solo 0) mostra o tapete completo
+      const layerP = clamp(chunk.sandLayer[ci] / (cfg.sandMinLayerMeters * 1.5), 0, 1);
+      const sandP = clamp(Math.max(layerP * 0.9, (sand - 0.34) / 0.3), 0, 1);
+      const sandJitter = 0.75 + 0.25 * hash2(cfg.seed, tx, ty, 137);
       let ground: Rect = GROUND_TILES.grass;
       if (snowy) ground = GROUND_TILES.snow;
       else if (soil === 0 && moist < 0.4) ground = GROUND_TILES.sand;
       else if (soil === 2 && moist < 0.3) ground = GROUND_TILES.dirt;
       ops.push({ k: 'blit', img: GROUND_TILES_FILE, sx: ground[0], sy: ground[1], sw: 32, sh: 32, dx: sx, dy: sy, dw: T, dh: T });
       tileCount++;
+      if (!snowy && sandP > 0.02) {
+        const sandA = clamp(sandP * sandJitter, 0, 1);
+        ops.push({ k: 'blit', img: GROUND_TILES_FILE, sx: GROUND_TILES.sand[0], sy: GROUND_TILES.sand[1], sw: 32, sh: 32, dx: sx, dy: sy, dw: T, dh: T, alpha: sandA });
+        // areia clara: o tile do pacote é o mesmo da terra, então clareamos
+        ops.push({ k: 'fill', x: sx, y: sy, w: T, h: T, r: 226, g: 199, b: 138, a: sandA * 0.42 });
+        if (sandP > 0.45 && hash2(cfg.seed, Math.floor(tx / 3), Math.floor(ty / 3), 138) > 0.55) {
+          ops.push({ k: 'fill', x: sx + 6, y: sy + T - 9, w: T - 12, h: 2, r: 196, g: 168, b: 108, a: sandA * 0.25 });
+        }
+      }
 
       // variação sutil por tile (evita repetição óbvia)
       const v = chunk.groundVariant[chunk.tileIdx(tx - cx0(chunk, cfg, tx), ty - cy0(chunk, cfg, ty))] ?? 0;
@@ -135,21 +155,27 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
       if (depth <= 0.3) {
         let near = depth > 0.02 ? 2 : 0;
         let nearDeep = depth > 0.25 ? 2 : 0;
-        let nearLake = 0;
         const nbs: Array<[number, number]> = [[1, 0], [-1, 0], [0, 1], [0, -1]];
         for (const [ox, oy] of nbs) {
           const b = at(tx + ox, ty + oy);
           if (!b) continue;
           if (b.chunk.waterDepth[b.ci] > 0.03) near++;
           if (b.chunk.waterDepth[b.ci] > 0.25) nearDeep++;
-          if (b.chunk.waterDepth[b.ci] > 0.25 && b.chunk.waterKind[b.ci] & 1) nearLake++;
         }
         if (near > 0) {
-          const lakeShore = nearLake > 0;
           const deep = nearDeep > 0;
-          // praia arenosa em lagos; margem de rio vira terra úmida (mais coerente)
-          if (lakeShore && !snowy) {
-            ops.push({ k: 'blit', img: GROUND_TILES_FILE, sx: GROUND_TILES.sand[0], sy: GROUND_TILES.sand[1], sw: 32, sh: 32, dx: sx, dy: sy, dw: T, dh: T, alpha: clamp(0.4 + nearLake * 0.22, 0, 0.85) });
+          // areia molhada é mais escura (linha d'água legível na praia)
+          if (!snowy && sandP > 0.2 && (depth > 0 || moist > 0.72)) {
+            ops.push({ k: 'fill', x: sx, y: sy, w: T, h: T, r: 96, g: 82, b: 52, a: 0.14 * sandP });
+          }
+          // barranco erodido: o terreno REALMENTE rebaixou ali (delta persistido),
+          // em coordenadas de CÉLULA (a morfologia trabalha nessa grade)
+          const cellX = Math.floor(tx / cfg.simCellTiles);
+          const cellY = Math.floor(ty / cfg.simCellTiles);
+          const erosion = -world.getDelta(cellX, cellY);
+          if (!snowy && erosion > 0.0015) {
+            const scarA = clamp((erosion - 0.0015) / 0.02, 0, 0.55);
+            ops.push({ k: 'blit', img: GROUND_TILES_FILE, sx: GROUND_TILES.dirt[0], sy: GROUND_TILES.dirt[1], sw: 32, sh: 32, dx: sx, dy: sy, dw: T, dh: T, alpha: scarA });
           }
           if (deep) ops.push({ k: 'fill', x: sx, y: sy, w: T, h: T, r: 62, g: 50, b: 34, a: Math.min(0.42, 0.14 + nearDeep * 0.11) });
         }
@@ -480,6 +506,16 @@ function heatColor(mode: string, chunk: Chunk, ci: number): [number, number, num
     case 'water': {
       const t = clamp(chunk.waterDepth[ci] / 2, 0, 1);
       return [20, Math.round(120 - t * 60), Math.round(120 + t * 135)];
+    }
+    case 'sand': {
+      // fração de areia da superfície: azul (nada) → amarelo (praia)
+      const t = clamp(chunk.sand[ci], 0, 1);
+      return [Math.round(40 + t * 200), Math.round(90 + t * 130), Math.round(190 - t * 130)];
+    }
+    case 'sediment': {
+      // carga suspensa relativa ao máximo configurado
+      const t = clamp(chunk.sediment[ci] / 0.004, 0, 1);
+      return [Math.round(60 + t * 180), Math.round(60 + t * 40), Math.round(60 - t * 20)];
     }
     case 'nutrients': {
       const t = clamp(chunk.nAvail[ci] / 1.2, 0, 1);

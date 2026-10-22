@@ -15,7 +15,7 @@ import { seedFromString } from './core/rng';
 import { hash2 } from './core/rng';
 import { SPECIES } from './world/flora';
 
-const DEBUG_MODES: DebugMode[] = [null, 'chunks', 'elevation', 'moisture', 'flow', 'current', 'soil', 'veg', 'water', 'nutrients'];
+const DEBUG_MODES: DebugMode[] = [null, 'chunks', 'elevation', 'moisture', 'flow', 'current', 'soil', 'veg', 'water', 'sand', 'sediment', 'nutrients'];
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -248,7 +248,8 @@ function updateHud(ops: number) {
   el('hud-seed').textContent = `seed ${world.cfg.seed}`;
   const spr = renderer.failedFiles.length > 0 ? ` · sprites ${renderer.loadedCount}/${spriteTotal} ⚠${renderer.failedFiles.length}` : ` · sprites ${renderer.loadedCount}/${spriteTotal}`;
   const water = world.stats.waterVolume >= 1000 ? `${(world.stats.waterVolume / 1000).toFixed(1)}k m³` : `${world.stats.waterVolume.toFixed(0)} m³`;
-  el('hud-perf').textContent = `${fps.toFixed(0)} fps · ${world.chunks.size} chunks · ${world.stats.plants} plantas · água ${water} · ${ops} ops · gen ${world.stats.genMs.toFixed(1)} ms · sim ${world.stats.simMs.toFixed(1)} ms${spr}`;
+  const sediment = world.stats.sandCells;
+  el('hud-perf').textContent = `${fps.toFixed(0)} fps · ${world.chunks.size} chunks · ${world.stats.plants} plantas · água ${water} · areia ${sediment} cél. · ${ops} ops · gen ${world.stats.genMs.toFixed(1)} ms · sim ${world.stats.simMs.toFixed(1)} ms${spr}`;
   el('hud-debug').textContent = DEBUG_MODES[debugIdx] ? `debug: ${DEBUG_MODES[debugIdx]}` : 'debug: off (Q alterna)';
   void Climate;
 }

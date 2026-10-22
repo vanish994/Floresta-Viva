@@ -14,9 +14,10 @@ decomposição, erosão, clima, estações) evoluem em frequências separadas do
 ```bash
 npm install
 npm run dev          # abre o jogo (Vite em 0.0.0.0:5173)
-npm test             # 58 testes (determinismo, continuidade, hidrologia, física da água, ecologia, tempo, chunks, persistência)
+npm test             # 72 testes (determinismo, continuidade, hidrologia, água, erosão, ecologia, tempo, chunks, persistência)
 npm run preview:world  # validação visual headless: renderiza PNGs reais + mapas de campos
 npm run scenario:water # cenário reproduzível da física da água (volumes + orçamento)
+npm run scenario:erosion # cenário reproduzível de erosão/sedimentação/margens
 npm run build        # typecheck + bundle
 ```
 
@@ -28,6 +29,7 @@ npx tsx tools/preview.ts --seed 4242 --day 4 --hour 15 --find river
 npx tsx tools/preview.ts --seed 777  --day 16 --hour 10 --find open   # inverno/neve
 npx tsx tools/preview.ts --seed 1337 --day 4 --hour 10 --find river --sim 8 --rain 1  # enchente
 npx tsx tools/water-scenario.ts --hours 10 --rain 0.02                # balanço de massa
+npx tsx tools/preview.ts --seed 1337 --day 4 --hour 10 --find river --sim 96   # 96 h de erosão
 ```
 
 Gera em `.tmp/previews/` uma cena renderizada com as **mesmas ops de desenho do jogo**
@@ -40,7 +42,7 @@ Exemplos commitados em `docs/imagens/`.
 | tecla | ação |
 | --- | --- |
 | WASD / setas | mover |
-| `Q` | alterna modos de depuração (chunks, elevação, umidade, fluxo, correnteza, solo, vegetação, água, nutrientes) |
+| `Q` | alterna modos de depuração (chunks, elevação, umidade, fluxo, correnteza, solo, vegetação, água, areia, sedimento, nutrientes) |
 | `P` | pausa o relógio do mundo |
 | `F` | derruba a árvore mais próxima (vira liteira; efeito ecológico real) |
 | `G` | planta uma muda da espécie mais adequada ao solo local |
@@ -83,7 +85,12 @@ O jogo é jogável no celular (toque), não só no desktop:
 - **Vegetação**: 6 espécies com traços ecológicos; germinação/recrutamento por pressão de
   sementes + zoocoria, crescimento por idade/saúde, competição por luz (copa), morte por
   estresse, senescência, liteira sazonal (decíduas perdem folhas no outono).
-- **Erosão** lenta e persistente (deltas de terreno sobreviverem a unload/save).
+- **Erosão, sedimentos e margens**: solo desprotegido erode pela correnteza e pela chuva
+  (resistência por textura, copa, matéria orgânica e raízes); a carga é transportada na
+  direção real do fluxo, atravessa chunks e deposita onde a energia cai — formando bancos
+  de areia, praias e lama de lago. A areia é um estado físico (fração + espessura de
+  depósito) com histerese, e margens secas sob vegetação se recuperam. Ver
+  [`docs/EROSAO.md`](docs/EROSAO.md).
 - **Clima/astronomia**: dia de 24 min reais, declinação solar por inclinação axial (23,4°),
   duração do dia variando com a estação, estações configuráveis (28 dias/ano), chuva em
   feixes determinísticos, neve no inverno.
@@ -97,6 +104,7 @@ O jogo é jogável no celular (toque), não só no desktop:
 - `docs/ARQUITETURA.md` — decisões técnicas e fluxo de dados.
 - `docs/PARAMETROS.md` — todos os parâmetros configuráveis e traços das espécies.
 - `docs/FISICA_DA_AGUA.md` — física da água: modelo, conservação, testes, limitações.
+- `docs/EROSAO.md` — erosão, transporte/deposição de sedimentos e margens arenosas.
 - `docs/RELATORIO_FINAL.md` — relatório final pedido pelo prompt (testes, limitações, pendências).
 - `docs/PROMPT_MUNDO_PROCEDURAL_FLORESTA_VIVA.md` — o prompt original do projeto.
 

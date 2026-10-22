@@ -12,7 +12,8 @@
    `CanvasRenderer` (navegador) e `SoftwareRenderer` (validação headless em Node).
 3. **Frequências distintas.** Relógio visual por frame; superfície da água em passo
    fixo de 0,02 h (1,2 s reais); balanço hídrico do solo a cada 0,5 h; biologia a
-   cada 3 h; erosão a cada 24 h. Passos quantizados ⇒ independente de FPS.
+   cada 3 h; margens/textura de areia a cada 1 h; erosão e transporte de sedimentos a
+   cada 24 h. Passos quantizados ⇒ independente de FPS.
 4. **Persistência por diffs.** A seed regenera o que é determinístico; só mudanças
    (plantas removidas/recrutadas, solo modificado, deltas de erosão, lâmina e
    velocidade da água, relógio) são salvas.
@@ -81,8 +82,13 @@
 - **Solo**: `stepWater` (ecology) faz chuva → interceptação → infiltração →
   `surfaceInput` (água pendente que o solver move). Não há mais roteamento por D8
   nem criação de água no passo de solo.
-- **Erosão**: usa velocidade e profundidade reais; sedimento suspenso conservado;
-  `chunk.elev` atualizado no mesmo passo (deformação visível, deltas persistentes).
+- **Erosão/sedimentação** (`src/world/sediment.ts`): velocidade e profundidade reais,
+  resistência por textura/copa/raízes/matéria orgânica, carga suspensa conservada
+  transportada na direção do fluxo (entre chunks) e depositada onde a energia cai;
+  `chunk.elev`/`slope` atualizados no mesmo passo (deformação visível e persistente).
+- **Margens**: fração de areia (`chunk.sand`) + espessura do depósito
+  (`chunk.sandLayer`) → classificação com histerese/cooldown; lavagem seletiva só em
+  solos com areia e deposição como única fonte de areia nova.
 - **Vegetação**: alagamento acumula `floodHours` → estresse por espécie; arrasto
   `ρgh·v` com resistência por raiz/tamanho derruba árvores vulneráveis (teto por
   passo, hash determinístico, liteira no local, índice reconstruído).
@@ -98,9 +104,8 @@
   lixiviação de N; pH derivando; recrutamento por pressão de sementes + zoocoria
   (`fauna.ts`); mortalidade por estresse hídrico prolongado (vira liteira);
   solo florestal se desenvolve sob copa estabelecida.
-- `stepErosion`: capacidade de transporte por vazão×declive÷resistência (cobertura
-  vegetal + textura); deposição onde a energia cai; escreve em `world.terrainDeltas`
-  (persistente, sobrevive a unload).
+- `stepBanks`/`stepErosion` (em `sediment.ts`, não mais em `ecology.ts`): detalhados em
+  `docs/EROSAO.md`; escrevem em `world.terrainDeltas` (persistente) e em `chunk.sand`.
 - Índices espaciais (`chunk.plantIndex`) mantêm ecologia e colisão baratas.
 
 ## Clima e astronomia (`src/world/climate.ts`)
@@ -161,5 +166,6 @@ mundo via zoocoria, e as interfaces `FaunaAgent`/`FaunaSystem` para agentes futu
 
 - `tools/preview.ts` — validação visual headless (cenas + mapas de campos, `--sim`/`--rain`).
 - `tools/water-scenario.ts` — cenário reproduzível da física da água com orçamento de massa.
+- `tools/erosion-scenario.ts` — cenário reproduzível de erosão/sedimentação e margens.
 - `tools/png.ts` — codec PNG sem dependências (decode dos sprites / encode dos previews).
 - `tools/gen-manifest.mjs` — regenera o manifesto de sprites a partir das medições.
