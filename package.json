@@ -1,0 +1,23 @@
+{
+  "name": "floresta-viva",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Mundo procedural de floresta com chunks, hidrologia, solo, vegetação e ciclos ambientais",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "preview:world": "tsx tools/preview.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.5",
+    "vitest": "^2.1.8"
+  }
+}
