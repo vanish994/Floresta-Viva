@@ -36,7 +36,6 @@ const touch = new TouchControls();
 const isSmallScreen = () => Math.min(window.innerWidth, window.innerHeight) < 560;
 
 function resize() {
-  // pixel art: 1 px de jogo = 1 px CSS (sem DPR: performance em mobile)
   const w = window.visualViewport ? window.visualViewport.width : window.innerWidth;
   const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
   canvas.width = Math.max(320, Math.floor(w));
@@ -50,7 +49,6 @@ window.visualViewport?.addEventListener('resize', resize);
 resize();
 
 function createWorld(seed: number, load: boolean) {
-  // mobile first: mundo menor carregado em telas pequenas (menos memória/CPU)
   world = new World(
     isSmallScreen() ? { seed, loadRadiusChunks: 2, lookaheadChunks: 1, maxChunkGenPerFrame: 1 } : { seed },
   );
@@ -98,6 +96,15 @@ document.getElementById('btn-pause')!.addEventListener('click', () => {
 document.getElementById('btn-char')!.addEventListener('click', () => {
   player.female = !player.female;
 });
+const rainButton = document.getElementById('btn-rain');
+if (rainButton) {
+  rainButton.addEventListener('click', () => {
+    const enabled = (globalThis as typeof globalThis & { __florestaRainOverride?: boolean }).__florestaRainOverride !== true;
+    (globalThis as typeof globalThis & { __florestaRainOverride?: boolean }).__florestaRainOverride = enabled;
+    rainButton.textContent = enabled ? '☀ parar chuva' : '🌧 chuva';
+    rainButton.setAttribute('aria-pressed', String(enabled));
+  });
+}
 const hud = document.getElementById('hud')!;
 const btnHud = document.getElementById('btn-hud')!;
 btnHud.addEventListener('click', () => {
@@ -110,7 +117,6 @@ if (isSmallScreen()) {
 }
 window.addEventListener('beforeunload', () => saveWorld(world));
 
-// publicDir 'assets' => sprites servidos na RAIZ do site (dev e dist), não em /assets/
 const assetBase = './';
 const spriteTotal = allAssetFiles().length;
 renderer.load(allAssetFiles(), assetBase).then(() => {
@@ -119,7 +125,6 @@ renderer.load(allAssetFiles(), assetBase).then(() => {
   requestAnimationFrame(loop);
 });
 
-/** aviso honesto se algum sprite não baixar (em vez de quadrados mudos) */
 function showSpriteError(n: number) {
   const box = document.createElement('div');
   box.id = 'sprite-error';
@@ -128,7 +133,6 @@ function showSpriteError(n: number) {
   document.body.appendChild(box);
 }
 
-// aba restaurada do bfcache (celular: voltar ao app depois de horas) => reload
 window.addEventListener('pageshow', (e) => {
   if (e.persisted) location.reload();
 });
@@ -141,7 +145,6 @@ function loop(now: number) {
   const dt = dtMs / 1000;
   fps = fps * 0.92 + (1000 / Math.max(1, dtMs)) * 0.08;
 
-  // teclas de ação
   if (input.consume('KeyQ')) debugIdx = (debugIdx + 1) % DEBUG_MODES.length;
   if (input.consume('KeyP')) world.clock.paused = !world.clock.paused;
   if (input.consume('KeyF') || touch.consumeCut()) cutTree();
@@ -155,7 +158,6 @@ function loop(now: number) {
   world.pumpGeneration();
   world.update(dtMs);
 
-  // câmera inteira, centrada no personagem
   const camX = Math.round(player.x - canvas.width / 2);
   const camY = Math.round(player.y - canvas.height / 2);
   const scene = composeScene(world, { x: camX, y: camY, w: canvas.width, h: canvas.height }, {
@@ -165,7 +167,6 @@ function loop(now: number) {
   });
   renderer.render(ctx, scene.ops, canvas.width, canvas.height);
 
-  // autosave periódico
   if (now - lastSave > 20000) {
     lastSave = now;
     if (saveWorld(world)) el('hud-save').textContent = 'auto-save ✓';
@@ -192,7 +193,6 @@ function cutTree() {
     chunk.removedPlants.add(bestId);
     chunk.dirty = true;
     chunk.rebuildPlantIndex();
-    // madeira derrubada vira liteira no solo (coerência ecológica)
     const lx = Math.floor(player.x / cellPx) - chunk.cx * chunk.n;
     const ly = Math.floor(player.y / cellPx) - chunk.cy * chunk.n;
     const i = chunk.cellIdx(lx, ly);
