@@ -12,7 +12,7 @@ import { cellToTile } from '../core/coords';
 import { WorldFields, type DeltaAt } from './fields';
 import { solveHydrology, DX8, DY8 } from './hydro';
 import { sandBaseOf } from './sediment';
-import { Chunk, SOIL_ALLUVIAL, SOIL_FOREST } from './chunk';
+import { Chunk, SOIL_ALLUVIAL, SOIL_FOREST, SOIL_ROCK } from './chunk';
 import { SPECIES, type PlantRecord } from './flora';
 import type { Climate } from './climate';
 
@@ -118,6 +118,23 @@ export function generateChunk(ctx: GenContext, cx: number, cy: number): Chunk {
       chunk.pH[i] = [6.2, 6.6, 7.2, 5.8, 6.8][soil] + (hash2(cfg.seed, gx, gy, 41) - 0.5) * 0.5;
       chunk.microbe[i] = clamp(0.25 + chunk.moisture[i] * 0.5 + forest * 0.25, 0.05, 1);
       chunk.stress[i] = 0;
+
+      // --- capacidade hídrica, compactação, camada herbácea e luz -----------
+      // capacidade = profundidade × retenção da textura × matéria orgânica
+      const textureRetention = [0.75, 1.15, 0.5, 1.25, 1.0][soil] ?? 1;
+      const organic = 1 + clamp(chunk.humus[i] / 12, 0, 1.5) * 0.6;
+      chunk.waterCapacity[i] = clamp(chunk.soilDepth[i] * textureRetention * organic, 0.15, 3);
+      // encostas íngremes e solo raso compactam; vegetação e húmus descompactam
+      chunk.compaction[i] = clamp(
+        smoothstep(0.9, 2.4, chunk.slope[i]) * 0.6 + (soil === SOIL_ROCK ? 0.35 : 0) - forest * 0.2,
+        0,
+        1,
+      );
+      // camada herbácea inicial: onde há luz e umidade, mas não copa fechada
+      const openness = clamp(1 - forest * 0.9, 0.05, 1);
+      chunk.forage[i] = clamp(smoothstep(0.15, 0.55, chunk.moisture[i]) * openness * (1 - chunk.waterDepth[i]), 0, 1);
+      chunk.coarse[i] = 0;
+      chunk.light[i] = clamp(1 - forest * 0.8, 0.05, 1);
     }
   }
 

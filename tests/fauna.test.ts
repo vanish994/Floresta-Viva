@@ -10,6 +10,7 @@ import { chunkKeyStr } from '../src/core/coords';
 import {
   seedFauna,
   stepFauna,
+  makeAnimal,
   animFor,
   FAUNA_CAP,
   FAUNA_TRAITS,
@@ -279,13 +280,12 @@ describe('fauna visual', () => {
     w.pumpGeneration(100);
     const chunk = w.getChunk(0, 0)!;
     // injeta um animal conhecido no meio da câmera
-    const animal: Animal = {
+    const animal: Animal = makeAnimal({
       id: 1, kind: 'rabbit', chunk,
       x: chunk.cx * CELLS * CELL + 5 * CELL,
       y: chunk.cy * CELLS * CELL + 5 * CELL,
-      vx: 0, vy: 0, state: 'idle', timer: 0, facing: 1, animPhase: 0,
-      hunger: 0.3, energy: 0.8, tx: 0, ty: 0, quirk: 0.5, hover: 0,
-    };
+      energy: 0.8,
+    });
     (w as unknown as { faunaByChunk: Map<string, Animal[]> }).faunaByChunk.set(chunkKeyStr(chunk.cx, chunk.cy), [animal]);
     const cam = { x: animal.x - 100, y: animal.y - 80, w: 200, h: 160 };
     const scene = composeScene(w, cam, { timeMs: 1000 });

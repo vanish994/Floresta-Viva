@@ -5,12 +5,12 @@
  */
 import { WorldConfig, DEFAULT_CONFIG } from '../core/config';
 import { chunkOfPx, chunkKeyStr, chunksInRadius, type ChunkKey } from '../core/coords';
-import { clamp } from '../core/rng';
+import { clamp, hash2 } from '../core/rng';
 import { WorldFields } from './fields';
 import { Climate, GameClock } from './climate';
 import { Chunk } from './chunk';
 import { generateChunk, type GenContext } from './gen';
-import { stepWater, stepBio, type Neighborhood } from './ecology';
+import { stepWater, stepBio, type Neighborhood, type SoilWaterFlux } from './ecology';
 import {
   stepErosion,
   stepBanks,
@@ -31,6 +31,7 @@ import type { PlantRecord } from './flora';
 import {
   seedFauna,
   stepFauna,
+  FAUNA_CAP,
   type Animal,
 } from './fauna';
 import {
@@ -73,6 +74,14 @@ export interface WorldStats {
   ecoArchived: number;
   /** animais visuais ativos (coelhos, sapos, aves) */
   animals: number;
+  /** umidade do ar 0..1 (ciclo atmosférico) */
+  humidity: number;
+  /** cobertura de nuvens 0..1 */
+  cloudCover: number;
+  /** chuva efetiva 0..1 */
+  rain: number;
+  /** tipo de chuva (garoa…tempestade) */
+  rainKind: string;
 }
 
 /** estado de água arquivado quando um chunk é descarregado */
@@ -127,6 +136,10 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
     floweringPlants: 0,
     ecoArchived: 0,
     animals: 0,
+    humidity: 0.55,
+    cloudCover: 0,
+    rain: 0,
+    rainKind: 'seco',
   };
   /** orçamento acumulado de água (m³) desde o início da sessão */
   readonly waterBudget: WaterBudget = createWaterBudget();
@@ -349,8 +362,13 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
       }
 
       let guard = 0;
+      const rainNow = this.climate.precipitationNow();
       while (hours - chunk.lastSoilHour >= cfg.periodWaterHours && guard < maxSteps) {
-        stepWater(chunk, cfg, this.climate, cfg.periodWaterHours, this.clock.dayFloat, this);
+        const flux: SoilWaterFlux = { evaporation: 0, transpiration: 0, runoff: 0 };
+        stepWater(chunk, cfg, this.climate, cfg.periodWaterHours, this.clock.dayFloat, this, rainNow, flux);
+        this.atmosEvaporation += flux.evaporation;
+        this.atmosTranspiration += flux.transpiration;
+        this.atmosRunoff += flux.runoff;
         chunk.lastSoilHour += cfg.periodWaterHours;
         guard++;
       }
@@ -365,6 +383,8 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
 
     }
 
+    // ciclo atmosférico: consome a evapotranspiração do passo e decide a chuva
+    this.runAtmosphere(gameHours);
     // física da água superficial: passo fixo, independente da taxa de quadros
     this.runWaterPhysics(gameHours);
     // morfologia fluvial (erosão/deposição) e margens, com a água já atualizada
@@ -380,6 +400,11 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
 
   /** acumuladores de tempo de jogo (frequências independentes) */
   private waterAccumHours = 0;
+  /** acumuladores do ciclo atmosférico (passo fixo, independente de FPS) */
+  private atmosAccumHours = 0;
+  private atmosEvaporation = 0;
+  private atmosTranspiration = 0;
+  private atmosRunoff = 0;
   private erosionAccumHours = 0;
   private bankAccumHours = 0;
 
@@ -415,13 +440,13 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
           continue;
         }
         let insects = this.insectsByChunk.get(key);
+        const hadFlora = chunk.plants.length + chunk.recruitedPlants.length > 0;
         if (!insects) {
           insects = seedInsects(chunk, cfg, hour, day);
           this.insectsByChunk.set(key, insects);
         }
-        // a população acompanha a flora local: sem insetos, tenta repovoar
-        // (abelhas só aparecem quando há flor — é o ciclo positivo/negativo)
-        if (insects.length === 0) {
+        // a população acompanha a flora local (sem flor, sem polinizador)
+        if (insects.length === 0 && hadFlora) {
           insects = seedInsects(chunk, cfg, hour, day);
           this.insectsByChunk.set(key, insects);
         }
@@ -437,9 +462,7 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
           budget: this.ecoBudget,
           neighbors: this.neighborLookup,
         });
-        // registra a planta cuja flor RECEBEU pólen neste passo (só quando o
-        // inseto que chegou já vinha carregando pólen): é isso que fecha a
-        // floração e vira fruto verde na fenologia
+        // registra a planta cuja flor RECEBEU pólen neste passo
         for (const insect of insects) {
           if (insect.targetId < 0 || !insect.pollen) continue;
           const prev = before.get(`${insect.kind}:${insect.id}`);
@@ -448,29 +471,78 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
           if (arrived) visits.set(insect.targetId, (visits.get(insect.targetId) ?? 0) + 1);
         }
         updatePestPressure(chunk, insects);
-        // a fauna visual lê os insetos locais (comida) e o ambiente do chunk
         chunk.localInsects = insects.map((ins) => ({ x: ins.x, y: ins.y, kind: ins.kind }));
+
+        // --- fauna: nasce e é reposta conforme o alimento local -------------
         let animals = this.faunaByChunk.get(key);
         if (!animals) {
           animals = seedFauna(chunk, cfg, dayFloat, hour, insects);
           this.faunaByChunk.set(key, animals);
         }
-        if (animals.length === 0 && insects.length > 0) {
+        if (animals.length === 0) {
           animals = seedFauna(chunk, cfg, dayFloat, hour, insects);
           this.faunaByChunk.set(key, animals);
         }
-        stepFauna(animals, cfg, insectStep, {
-          worldDay: dayFloat,
-          hour,
-          playerX: this.playerX,
-          playerY: this.playerY,
-          neighbor: this.neighborLookup,
-        });
+        this.repopulateFauna(chunk, animals, insects, hour, dayFloat, day);
       }
       this.insectAccumHours -= insectStep;
       insectRuns++;
     }
     if (insectRuns >= 4) this.insectAccumHours = 0;
+
+    // --- fauna visual: movimento por quadro, em px/s (suave em qualquer FPS) --
+    for (const chunk of this.chunks.values()) {
+      if (Math.abs(chunk.cx - center.cx) > 1 || Math.abs(chunk.cy - center.cy) > 1) continue;
+      const key = chunkKeyStr(chunk.cx, chunk.cy);
+      const animals = this.faunaByChunk.get(key);
+      if (!animals || animals.length === 0) continue;
+      const deaths: number[] = [];
+      stepFauna(animals, cfg, gameHours, {
+        worldDay: dayFloat,
+        hour,
+        playerX: this.playerX,
+        playerY: this.playerY,
+        neighbor: this.neighborLookup,
+        // --- consumo REAL: a fauna come insetos e frutos do mundo -----------
+        consumeInsect: (target, x, y, radius) => {
+          const list = this.insectsByChunk.get(chunkKeyStr(target.cx, target.cy));
+          if (!list || list.length === 0) return false;
+          let best = -1;
+          let bestD = radius * radius;
+          for (let k = 0; k < list.length; k++) {
+            const d = (list[k].x - x) ** 2 + (list[k].y - y) ** 2;
+            if (d < bestD) {
+              bestD = d;
+              best = k;
+            }
+          }
+          if (best < 0) return false;
+          list.splice(best, 1);
+          target.localInsects = list.map((ins) => ({ x: ins.x, y: ins.y, kind: ins.kind }));
+          return true;
+        },
+        consumeFruit: (target, x, y, radius) => {
+          let best = -1;
+          let bestD = radius * radius;
+          for (let k = 0; k < target.groundFruits.length; k++) {
+            const gf = target.groundFruits[k];
+            const d = (gf.x - x) ** 2 + (gf.y - y) ** 2;
+            if (d < bestD) {
+              bestD = d;
+              best = k;
+            }
+          }
+          if (best < 0) return null;
+          const [eaten] = target.groundFruits.splice(best, 1);
+          target.ecoDirty = true;
+          return { species: eaten.species };
+        },
+        onDeath: (dead) => deaths.push(dead.id),
+      });
+      if (deaths.length > 0) {
+        this.faunaByChunk.set(key, animals.filter((a) => !deaths.includes(a.id)));
+      }
+    }
 
     // --- fenologia: no passo da biologia (3 h) -------------------------------
     this.ecoAccumHours += gameHours;
@@ -485,8 +557,6 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
         humidity: this.climate.meanWetness(),
       };
       for (const chunk of this.chunks.values()) {
-        // fenologia só na área visível/próxima (fora dela o custo não compensa;
-        // quando o jogador se aproxima, o passo retoma e o estado é consistente)
         if (Math.abs(chunk.cx - center.cx) > 2 || Math.abs(chunk.cy - center.cy) > 2) continue;
         stepPhenology(chunk, cfg.periodBioHours, ctx, this.ecoBudget, this.flowerVisits);
         chunk.lastEcoHour = this.clock.totalHours;
@@ -516,6 +586,45 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
     this.stats.ecoArchived = this.ecoArchive.size;
   }
 
+  /**
+   * Reposição populacional: só nasce animal se houver comida de verdade
+   * (forragem para coelho, insetos para sapo/ave) e espaço abaixo do teto.
+   * É o feedback "mais comida → mais bicho → menos comida → estabiliza".
+   */
+  private repopulateFauna(
+    chunk: Chunk,
+    animals: Animal[],
+    insects: Insect[],
+    hour: number,
+    dayFloat: number,
+    day: number,
+  ): void {
+    const cfg = this.cfg;
+    const counts = { rabbit: 0, frog: 0, bird: 0 } as Record<string, number>;
+    for (const a of animals) counts[a.kind] = (counts[a.kind] ?? 0) + 1;
+    let forage = 0;
+    for (let i = 0; i < chunk.forage.length; i++) forage += chunk.forage[i];
+    forage /= Math.max(1, chunk.n * chunk.n);
+    const wants: Array<{ kind: 'rabbit' | 'frog' | 'bird'; food: number; cap: number }> = [
+      { kind: 'rabbit', food: forage * 2.2, cap: FAUNA_CAP.rabbit },
+      { kind: 'frog', food: Math.min(1, insects.length / 4), cap: FAUNA_CAP.frog },
+      { kind: 'bird', food: Math.min(1, insects.length / 3), cap: FAUNA_CAP.bird },
+    ];
+    for (const w of wants) {
+      if (counts[w.kind] >= w.cap) continue;
+      if (w.food < 0.3) continue;
+      const roll = hash2(cfg.seed ^ 0x5f2a, chunk.cx * 71 + counts[w.kind], (chunk.cy * 37 + day * 13) | 0, 781);
+      if (roll >= 0.008 * w.food) continue;
+      const born = seedFauna(chunk, cfg, dayFloat, hour, insects).filter((a) => a.kind === w.kind);
+      if (born.length <= counts[w.kind]) continue;
+      const baby = { ...born[counts[w.kind]], health: 0.7, hunger: 0.5, thirst: 0.4 };
+      baby.id = Math.floor(
+        hash2(cfg.seed ^ 0x99e1, chunk.cx * 17 + counts[w.kind], (chunk.cy * 29 + day) | 0, 782) * 0x7fffffff,
+      );
+      animals.push(baby);
+    }
+  }
+
   /** insetos ativos de um chunk (render/debug) */
   insectsAt(chunk: Chunk): Insect[] {
     return this.insectsByChunk.get(chunkKeyStr(chunk.cx, chunk.cy)) ?? [];
@@ -531,12 +640,66 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
    * o custo é proporcional ao número de chunks carregados e a ordem de
    * processamento é fixa (chunks ordenados), então o resultado é determinístico.
    */
+  /**
+   * Ciclo atmosférico causal: agrega evaporação/transpiração/biomassa/água dos
+   * chunks carregados, avança umidade → nuvens → precipitação e publica o
+   * resultado em `stats` (HUD) e no clima (render/áudio/eco).
+   */
+  private runAtmosphere(gameHours: number): void {
+    if (!(gameHours > 0)) return;
+    const cfg = this.cfg;
+    this.atmosAccumHours += gameHours;
+    const stepH = 0.25; // 15 min de jogo: barato e estável
+    let steps = 0;
+    while (this.atmosAccumHours >= stepH && steps < 8) {
+      // agrega o estado do mundo carregado (O(células), algumas vezes por hora)
+      let wet = 0;
+      let cells = 0;
+      let biomass = 0;
+      let plants = 0;
+      for (const chunk of this.chunks.values()) {
+        const cn = chunk.n * chunk.n;
+        cells += cn;
+        for (let i = 0; i < cn; i++) {
+          if (chunk.waterDepth[i] > 0.02) wet++;
+          biomass += chunk.forage[i] * 0.15;
+        }
+        plants += chunk.plants.length + chunk.recruitedPlants.length;
+      }
+      const waterSurface = cells > 0 ? wet / cells : 0;
+      const forest = cells > 0 ? clamp((plants * 0.02 + biomass) / Math.max(1, cells * 0.05), 0, 1) : 0;
+      const temp = this.climate.temperature(this.clock.dayFloat, this.clock.hour, 0.3);
+      // normaliza os fluxos acumulados desde o último passo atmosférico
+      const norm = 1 / Math.max(1, cells * stepH);
+      this.climate.stepAtmosphere(stepH, {
+        temperature: temp,
+        evaporation: clamp(this.atmosEvaporation * norm * 40, 0, 1),
+        transpiration: clamp(this.atmosTranspiration * norm * 40, 0, 1),
+        forest,
+        waterSurface,
+        hour: this.clock.hour,
+        dayFloat: this.clock.dayFloat,
+      });
+      this.atmosEvaporation = 0;
+      this.atmosTranspiration = 0;
+      this.atmosRunoff = 0;
+      this.atmosAccumHours -= stepH;
+      steps++;
+    }
+    if (steps >= 8) this.atmosAccumHours = 0;
+    const a = this.climate.atmosphere;
+    this.stats.humidity = a.humidity;
+    this.stats.cloudCover = a.cloudCover;
+    this.stats.rain = this.climate.precipitationNow();
+    this.stats.rainKind = this.climate.rainKind();
+  }
+
   private runMorphology(gameHours: number): void {
     if (!(gameHours > 0)) return;
     const cfg = this.cfg;
     const t0 = performanceNow();
     const dayFloat = this.clock.dayFloat;
-    const rain = this.climate.rainIntensity(dayFloat);
+    const rain = this.climate.precipitationNow();
     const base = {
       worldDay: dayFloat,
       worldHours: this.clock.totalHours,

@@ -100,6 +100,45 @@ aluvial 0,04. Leito de rio/lago infiltra 15–20% do valor da margem.
 Textura inicial de areia por solo (`sandBase`): arenoso 0,85 · aluvial 0,35 ·
 florestal 0,15 · argiloso 0,10 · rochoso 0,03.
 
+## Ciclo causal: solo, atmosfera e fauna
+
+### Solo (`chunk.ts` / `ecology.ts`)
+
+| campo | faixa | significado |
+| --- | --- | --- |
+| `moisture` | 0..1 | saturação relativa (já existia) |
+| `waterCapacity` | 0,15..3 | retenção = profundidade × textura × matéria orgânica |
+| `compaction` | 0..1 | encosta/rocha compactam; vegetação e húmus descompactam |
+| `forage` | 0..1 | camada herbácea (comida de coelho), cresce com luz+água |
+| `coarse` | 0..6 | madeira/galhos (decomposição ~0,06 %/h) |
+| `light` | 0..1 | sol × (1 − copa) × (1 − nuvens) |
+
+`stepWater` devolve `{ evaporation, transpiration, runoff }` (m) usados pela
+atmosfera; infiltração = `Ksolo × capacidade × (1 − 0,75·compactação) × (1 − saturação)`.
+
+### Atmosfera (`climate.ts`)
+
+| parâmetro | valor | efeito |
+| --- | --- | --- |
+| `condensationThreshold` | 0,56 | umidade acima disto condensa com convecção |
+| `rainThreshold` | 0,30 | nuvem a partir da qual começa a chover |
+| `evapoGain` / `humidityRelax` | 0,22 / 0,16 | peso da evapotranspiração / retorno ao equilíbrio |
+| `condensationRate` | 0,26 | velocidade umidade → nuvem |
+| `rainDrain` / `rainDrying` | 0,30 / 0,06 | chuva consome nuvem / seca o ar |
+| passo | 0,25 h de jogo | custo fixo, independente de FPS |
+
+Equilíbrio da umidade = `0,34 + 0,26·sazonal + 0,10·floresta + 0,08·água − 0,10·calor + 0,30·sinótico`.
+
+### Fauna (necessidades)
+
+| taxa | valor | efeito |
+| --- | --- | --- |
+| fome | +0,055/h | > 0,55 procura comida; > 0,85 corrói saúde |
+| sede (ave) / (outros) | +0,035 / +0,055/h | > 0,5 bebe na água; > 0,75 procura água |
+| saúde | −0,05·excesso/h | ≤ 0,02 morre e vira matéria orgânica |
+| fezes | a cada 2,5–5,5 h após comer | +0,35 liteira, +N/P/K; semente com vigor |
+| germinação com vigor | ×(1 + 2·vigor) | semente dispersada germina até 3× mais |
+
 ## Fauna visual (`src/world/fauna.ts`)
 
 | item | valor | efeito |

@@ -569,7 +569,7 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
   for (const it of items) it.emit();
 
   // ---------- clima visível ----------
-  const rain = world.climate.rainIntensity(dayFloat);
+  const rain = world.climate.precipitationNow();
   if (rain > 0.05) {
     const n = Math.floor(rain * 70);
     for (let i = 0; i < n; i++) {

@@ -106,6 +106,11 @@ export interface SeedEntry {
   /** horas desde que a semente ficou viável no solo */
   ageHours: number;
   seedKey: number;
+  /**
+   * vigor extra de germinação (0..1). Sementes dispersadas por animais ganham
+   * bônus; sementes que apenas caíram do fruto não.
+   */
+  vigor?: number;
 }
 
 export interface PlantPhenology {
@@ -497,7 +502,7 @@ export function stepPhenology(
           const slot = pheno.fruits[k];
           const holdHours = Math.max(6, holdDays * 24 * slot.holdBias);
           const ageFactor = clamp(slot.ripeHours / holdHours, 0, 3);
-          const rain = ctx.climate.rainIntensity(ctx.worldDay) >= 0.5 ? 1.5 : 1;
+          const rain = ctx.climate.precipitationNow() >= 0.5 ? 1.5 : 1;
           // risco por passo: a chance de cair em relação ao tempo que já passou
           // maduro — quanto mais tempo na planta, maior a chance (nunca 100%
           // de uma vez, e sempre variável por fruto)
@@ -567,7 +572,9 @@ export function stepPhenology(
       const germ = moist > 0.35 && chunk.waterDepth[ci] < 0.25;
       if (seed.ageHours > 24 && germ && chunk.recruitedPlants.length < RECRUIT_CAP) {
         const roll = hash2(cfg.seed ^ 0x7d3, seed.seedKey, Math.floor(seed.ageHours), 616);
-        if (roll < 0.08) {
+        // sementes com vigor (dispersão animal) germinam mais e mais cedo
+        const chance = 0.08 * (1 + clamp(seed.vigor ?? 0, 0, 1) * 2);
+        if (roll < chance) {
           spawnSeedling(chunk, seed, cfg);
           budget.seeds++;
           continue;

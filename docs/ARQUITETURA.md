@@ -162,6 +162,25 @@ Load seguro: versão/seed/gerador conferidos; diffs aplicados quando o chunk é 
   `CanvasRenderer` os carrega com base `'./'` (idem no dev server).
 - `build.assetsDir: 'bundle'`: evita colisão de nome com a pasta pública `assets/`.
 
+## Ciclo causal (solo ↔ atmosfera ↔ vegetação ↔ fauna)
+
+- **Solo**: `waterCapacity`/`compaction` modulam infiltração e escoamento em
+  `stepWater`; cada célula guarda `forage` (herbácea), `coarse` (madeira) e
+  `light` (sol × copa × nuvens). `stepWater` devolve um orçamento de fluxos.
+- **Atmosfera**: `Climate.atmosphere` (umidade + nuvem) evolui por
+  evapotranspiração → condensação → precipitação; `precipitationNow()` alimenta
+  solo, erosão, fenologia, render e áudio. `rainIntensity()` continua sendo a
+  climatologia determinística usada na geração.
+- **Vegetação**: `plantHealth` inclui luz e nutrientes; `plantSize` (e portanto
+  crescimento) depende deles. Decomposição tem dois pools (rápido/lento).
+- **Fauna**: fome/sede/saúde; dieta consome insetos e frutos REAIS; fezes
+  devolvem matéria orgânica; ave dispersa sementes com vigor; morte vira
+  matéria orgânica. Reposição populacional só com comida e abaixo do teto.
+- **Persistência**: novos campos do solo entram quantizados no diff do chunk; a
+  atmosfera é serializada no save do mundo.
+
+Detalhes e medições em `docs/EVOLUCAO_CAUSAL.md`.
+
 ## Ecossistema (`src/world/ecosystem.ts`)
 
 - Fenologia por planta (`PlantRecord.pheno`): vegetativo → floração → fruto verde

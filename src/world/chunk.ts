@@ -83,7 +83,21 @@ export class Chunk {
   /** cooldown de classificação do solo (evita oscilação areia↔terra) */
   soilCooldown!: Float32Array;
   soilDepth!: Float32Array;
-  moisture!: Float32Array; // 0..1
+  moisture!: Float32Array; // 0..1 — saturação relativa do solo
+  /**
+   * Capacidade de retenção do solo (unidades de umidade). Deriva de
+   * profundidade × textura × matéria orgânica: solo fundo/orgânico guarda mais
+   * água na mesma saturação, e a infiltração/drenagem usam esse valor.
+   */
+  waterCapacity!: Float32Array;
+  /** compactação 0..1: reduz infiltração e aumenta escoamento */
+  compaction!: Float32Array;
+  /** biomassa da camada herbácea 0..1 (comida de coelho; cresce com luz+água) */
+  forage!: Float32Array;
+  /** matéria orgânica grossa (galhos/madeira) — decomposição lenta */
+  coarse!: Float32Array;
+  /** luz disponível na célula 0..1 (sol × copa × nuvens) — atualizada no passo bio */
+  light!: Float32Array;
   litter!: Float32Array; // matéria orgânica fresca (kg/m² relativo)
   humus!: Float32Array; // húmus estável
   nAvail!: Float32Array; // nitrogênio disponível
@@ -177,6 +191,11 @@ export class Chunk {
     this.soilCooldown = new Float32Array(c);
     this.soilDepth = new Float32Array(c);
     this.moisture = new Float32Array(c);
+    this.waterCapacity = new Float32Array(c);
+    this.compaction = new Float32Array(c);
+    this.forage = new Float32Array(c);
+    this.coarse = new Float32Array(c);
+    this.light = new Float32Array(c);
     this.litter = new Float32Array(c);
     this.humus = new Float32Array(c);
     this.nAvail = new Float32Array(c);

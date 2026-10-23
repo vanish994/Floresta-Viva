@@ -14,7 +14,7 @@ decomposição, erosão, clima, estações) evoluem em frequências separadas do
 ```bash
 npm install
 npm run dev          # abre o jogo (Vite em 0.0.0.0:5173)
-npm test             # 118 testes (determinismo, continuidade, hidrologia, água, erosão, natação, ecossistema, tempo, chunks, persistência)
+npm test             # 141 testes (determinismo, continuidade, hidrologia, água, erosão, natação, ecossistema, tempo, chunks, persistência)
 npm run preview:world  # validação visual headless: renderiza PNGs reais + mapas de campos
 npm run scenario:water # cenário reproduzível da física da água (volumes + orçamento)
 npm run scenario:erosion # cenário reproduzível de erosão/sedimentação/margens
@@ -112,6 +112,11 @@ O jogo é jogável no celular (toque), não só no desktop:
   saúde (menos flores/frutos) e joaninhas controlam pragas. Funciona no mundo
   infinito: o estado ecológico é arquivado ao descarregar o chunk e o tempo fora
   de tela é recuperado ao voltar. Ver [`docs/ECOSSISTEMA.md`](docs/ECOSSISTEMA.md).
+- **Ciclo causal**: chuva → solo (capacidade/compactação/infiltração/escoamento)
+  → evapotranspiração → umidade do ar → nuvens → chuva; luz × água × nutrientes
+  no crescimento; decomposição rápida/lenta → húmus/nutrientes; fauna com
+  fome/sede/saúde que come recursos reais, defeca matéria orgânica e dispersa
+  sementes. Ver [`docs/EVOLUCAO_CAUSAL.md`](docs/EVOLUCAO_CAUSAL.md).
 - **Fauna visual**: coelho (vegetação/grama), sapo (água/margem) e ave (árvores),
   com estados idle/wander/seek/eat/flee/rest/sleep, fuga do jogador, hábitos
   diurno/noturno e sprites extraídos da prancha fornecida em pixel art 1:1
@@ -129,6 +134,7 @@ O jogo é jogável no celular (toque), não só no desktop:
 - `docs/EROSAO.md` — erosão, transporte/deposição de sedimentos e margens arenosas.
 - `docs/ECOSSISTEMA.md` — floração, frutos, queda, sementes, insetos e pragas.
 - `docs/FAUNA.md` — fauna visual (coelho, sapo, ave): sprites, estados, chunks.
+- `docs/EVOLUCAO_CAUSAL.md` — ciclos água/solo/atmosfera/vegetação/fauna.
 - `docs/RELATORIO_FINAL.md` — relatório final pedido pelo prompt (testes, limitações, pendências).
 - `docs/PROMPT_MUNDO_PROCEDURAL_FLORESTA_VIVA.md` — o prompt original do projeto.
 
