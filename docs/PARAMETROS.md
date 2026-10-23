@@ -152,6 +152,34 @@ Equilíbrio da umidade = `0,34 + 0,26·sazonal + 0,10·floresta + 0,08·água �
 | `MAX_CHASE_HOURS` | 1,5 h de jogo | tempo máximo de perseguição antes de desistir |
 | cobra | `speed 40` · `attackRange 18` · `attackDamage 0,6` · `huntRange 190` | predador de emboscada com bote |
 | cobra (bote) | 2,3× de velocidade em `chase`/`attack` | arranque curto, não é "míssil" |
+| `STRIKE_WINDOW_HOURS` | 0,08 h | duração do estado `attack` (um bote) |
+| `ATTACK_COOLDOWN_HOURS` | 0,22 h | descanso entre botes (dano nunca por tick) |
+| `activityAt(kind, hora)` | 0..1 | curva de atividade: modula sono, velocidade e caça |
+| `HURT_HOURS` | 0,05 h (~3 s reais) | reação de dor (pose/flash curto, não é estado) |
+| `CORPSE_HOURS` | 1,0 h (~60 s reais) | carcaça imóvel no mundo antes de virar solo |
+| `CORPSE_DECAY_HOURS` | 0,45 h | início da decomposição visível (restos/moscas) |
+
+### Direções da fauna (`src/world/fauna.ts` + `src/render/manifest.ts`)
+
+| item | valor | efeito |
+| --- | --- | --- |
+| `facingFromVector(dx, dy, anterior)` | histerese de 25% | eixo dominante decide N/S/L/O; sem piscar na diagonal |
+| `Animal.facingDir` | `n · s · e · w` | linha do spritesheet usada no render |
+| `faunaRow(sheet, anim, dir)` | linha `anim:dir` | resolve a linha e se precisa espelhar |
+| `faunaFlip(sheet, anim, dir)` | só sem arte da direção | ave (folha de direção única) usa espelho |
+| `alias` (manifesto) | ex.: `swim→walk`, `attack→strike` | estado sem arte própria usa a linha existente |
+| células | coelho 24×21 · sapo 24×19 · cobra 30×21 · ave 19×14 | 1:1, dentro de ~1 tile de 32 px |
+
+### Camada visual da fauna (`src/render/scene.ts`)
+
+| item | valor | efeito |
+| --- | --- | --- |
+| escala | 1:1 (célula nativa) | coelho 21×17, sapo 27×15, ave 19×14, cobra 41×20 |
+| âncora | base do sprite | ponto de contato no chão; sombra logo abaixo |
+| direção | `flip` horizontal | escolhido pelo sinal de `vx`; Y não inverte o sprite |
+| LOD | 420 px do centro da câmera | perto: efeitos + quadro animado; longe: quadro 0, sem sombra |
+| efeitos | 1–6 `fill` por animal | poeira da fuga, ondulação da natação, "z" do sono, faísca de dor, brilho do bote, restos da carcaça |
+| contagem de frames | `faunaFrameCount` (manifesto) | fonte única — `scene.ts` não duplica a tabela |
 
 ## Personagem / natação (`src/game/player.ts`)
 
@@ -227,3 +255,19 @@ recuperação de no máximo 20 dias de jogo em ≤ 8 passos (`FF_MAX_HOURS`,
 A queda usa risco acumulado: `1 − exp(−(Δt/hold)·(0,45 + idade²)·chuva)`, com
 `hold` variando por espécie, saúde e por fruto (`holdBias`) — fruto maduro nunca
 fica indefinidamente na planta.
+
+## Recortes das árvores (`src/render/manifest.ts`)
+
+`TREE_RECTS` é gerado por `npx tsx tools/gen-tree-frames.ts`, que mede cada
+sprite como componente conexa de alpha (união das 5 variantes sazonais) e grava
+`tools/data/tree-frames.json` + o bloco no manifesto. Assim o recorte sempre
+inclui **copa + tronco** e nunca invade o sprite vizinho.
+
+| porte | altura do recorte | observação |
+| --- | --- | --- |
+| `small` | 45–51 px | inalterado |
+| `big` (média) | **88–96 px** | antes: 55–63 px → desenhava só a copa (bug do tronco) |
+| `bigger` | 126–128 px | inalterado |
+
+`tests/trees.test.ts` falha se qualquer variante não couber no recorte, se a
+média tiver menos de 80 px de altura ou se dois recortes se sobrepuserem.

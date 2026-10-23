@@ -14,9 +14,16 @@ import { clamp, hash2 } from '../core/rng';
 import {
   SPRITES, TREE_FILES, TREE_RECTS, GROUND_TILES, GROUND_TILES_FILE, CLIFF_SOUTH, CLIFF_DIAG, type Rect,
   FRUIT_SHEET, SEED_SHEET, INSECT_SHEET, fruitRect, seedRect, insectRect,
-  FAUNA_SHEETS, faunaRect,
+  FAUNA_SHEETS, faunaRect, faunaFrameCount, faunaHasAnim, faunaFlip,
 } from './manifest';
-import { agentView, type Animal } from '../world/fauna';
+import {
+  agentView,
+  CORPSE_HOURS,
+  CORPSE_DECAY_HOURS,
+  type Animal,
+  type FaunaAnim,
+  type Facing4,
+} from '../world/fauna';
 import { FRUITS, FRUIT_PIXELS, MAX_FLOWERS, phenoOf, type Insect } from '../world/ecosystem';
 import type { Op, SceneOps } from './ops';
 import { SEASONS } from '../world/climate';
@@ -833,58 +840,173 @@ function emitInsect(insect: Insect, cam: Camera, timeMs: number, push: (op: Op) 
   }
 }
 
-/** nº de frames de uma animação da fauna (para escolher o quadro) */
-function faunaFrames(animal: Animal, anim: string): number {
-  const sheet = FAUNA_SHEETS[animal.kind];
-  const frames: Record<string, Record<string, number>> = {
-    rabbit: { idle: 6, walk: 6, run: 5, jump: 5, eat: 6, sleep: 5 },
-    frog: { idle: 4, jump: 4, swim: 5, eat: 4, sleep: 4 },
-    bird: { idle: 5, fly: 4, land: 4, eat: 4, sleep: 4 },
-  };
-  return frames[animal.kind]?.[anim] ?? sheet.maxFrames;
-}
-
 /**
- * Desenha um animal no mesmo pipeline dos sprites (ordenado por y, mesma
- * câmera, mesma iluminação). O sprite é 1:1 com o pixel art do jogo: coelho
- * 21×17, sapo 25×14, ave 18×13 — escala nativa, sem esticar.
+ * Desenha um animal no MESMO pipeline dos sprites (mesma câmera, mesmo y-sort,
+ * mesma iluminação). Escala nativa 1:1 do pixel art — coelho 21×17, sapo 27×15,
+ * ave 19×14, cobra 41×20 — sem esticar para preencher o tile de 32 px.
+ *
+ * A IA já produz os estados; aqui eles ficam VISÍVEIS:
+ *  - fuga: poeira atrás de quem corre (coelho/sapo);
+ *  - sapo nadando: ondulação curta + linha d'água sobre o corpo;
+ *  - ave: sombra menor/mais clara separada do corpo (altura de voo);
+ *  - sono: dois "z" pequenos piscando;
+ *  - bote da cobra: brilho no focinho durante o ataque;
+ *  - dor: sobressalto (pose) + faíscas de impacto;
+ *  - morte: carcaça imóvel, sem sombra, mancha no chão e restos (decomposição).
+ *
+ * LOD: longe do centro da câmera o animal usa só o quadro estático (sem
+ * efeitos), mantendo a animação detalhada apenas para quem está perto.
  */
 function emitAnimal(animal: Animal, cam: Camera, timeMs: number, push: (op: Op) => void): void {
   const sheet = FAUNA_SHEETS[animal.kind];
-  const view = agentView(animal, timeMs, (a) => faunaFrames(animal, a));
-  const rect = faunaRect(sheet, view.anim, view.frame);
-  // escala nativa (1:1): os sprites já foram reduzidos para o tamanho do jogo
-  // (coelho 17 px, sapo 15 px, ave 14 px contra 29 px do personagem) — são
-  // animais pequenos, como devem ser, e ficam nítidos no pixel art
-  const zoom = 1;
-  const dw = rect[2] * zoom;
-  const dh = rect[3] * zoom;
+  const view = agentView(animal, timeMs, (a) => faunaFrameCount(animal.kind, a));
+  // fallback seguro: se a folha não tem a linha, desenha idle (nunca inventa frame)
+  const anim: FaunaAnim = faunaHasAnim(animal.kind, view.anim) ? view.anim : 'idle';
+  const cx = cam.x + cam.w / 2;
+  const cy = cam.y + cam.h / 2;
+  const near = Math.hypot(animal.x - cx, animal.y - cy) < 420;
+  const dir: Facing4 = view.dir;
+  const rect = faunaRect(sheet, anim, near ? view.frame : 0, dir);
+  // espelha SÓ quando a folha não tem aquela direção desenhada (ave)
+  const flip = faunaFlip(sheet, anim, dir);
+
+  const dead = animal.state === 'dead';
+  // 0..1 — quanto a carcaça já se decompôs (CORPSE_HOURS = tempo total no mundo)
+  const decay = dead ? clamp((animal.corpseHours ?? 0) / CORPSE_HOURS, 0, 1) : 0;
+  // último terço da carcaça: desaparece aos poucos (já virou solo)
+  const fade = dead && decay > 0.6 ? clamp(1 - (decay - 0.6) / 0.4, 0.15, 1) : 1;
+
+  const dw = rect[2];
+  const dh = rect[3];
   const dx = Math.round(animal.x - cam.x - dw / 2);
   const dy = Math.round(animal.y - cam.y - dh - view.hover);
+  const gx = Math.round(animal.x - cam.x);
+  const gy = Math.round(animal.y - cam.y);
+
   push({
     k: 'blit',
     img: sheet.file,
     sx: rect[0], sy: rect[1], sw: rect[2], sh: rect[3],
     dx, dy, dw, dh,
-    flip: view.facing === -1,
+    flip,
+    alpha: fade,
   });
-  // sombra de contato (dá peso ao animal; no voo fica menor)
-  const shadowW = view.hover > 0 ? 8 : Math.round(dw * 0.45);
-  push({
-    k: 'fill',
-    x: Math.round(animal.x - cam.x - shadowW / 2),
-    y: Math.round(animal.y - cam.y - 1),
-    w: shadowW, h: view.hover > 0 ? 1 : 2,
-    r: 24, g: 30, b: 20, a: view.hover > 0 ? 0.14 : 0.24,
-  });
-  // sapo na água: linha d'água sobre o corpo (não parece flutuar no seco)
-  if (view.anim === 'swim') {
+
+  // sombra de contato: dá peso ao bicho. Carcaça não tem sombra — tem mancha.
+  // Fora do raio detalhado (LOD) o animal é desenhado "chapado", sem sombra.
+  if (near && !dead) {
+    const shadowW = view.hover > 0 ? 8 : Math.round(dw * 0.45);
     push({
       k: 'fill',
-      x: dx, y: dy + Math.round(dh * 0.55),
-      w: dw, h: Math.max(1, Math.round(dh * 0.45)),
-      r: 30, g: 86, b: 120, a: 0.3,
+      x: Math.round(animal.x - cam.x - shadowW / 2),
+      y: gy - 1,
+      w: shadowW, h: view.hover > 0 ? 1 : 2,
+      r: 24, g: 30, b: 20, a: view.hover > 0 ? 0.14 : 0.24,
     });
+  } else if (near) {
+    // mancha no chão (não é sombra): duas faixas, a de baixo mais estreita,
+    // e a mancha cresce conforme o corpo se decompõe
+    const stainW = Math.round(dw * (0.45 + 0.35 * decay));
+    const stainA = Math.min(0.55, 0.2 + decay * 0.3) * fade;
+    push({
+      k: 'fill',
+      x: gx - Math.round(stainW / 2),
+      y: gy - 1,
+      w: stainW, h: 1,
+      r: 46, g: 36, b: 24, a: stainA,
+    });
+    push({
+      k: 'fill',
+      x: gx - Math.round(stainW * 0.3),
+      y: gy,
+      w: Math.round(stainW * 0.6), h: Math.max(1, Math.round(decay * 2)),
+      r: 38, g: 30, b: 20, a: stainA * 0.8,
+    });
+  }
+
+  if (near) {
+    // --- sapo na água: ondulação (não parece que está andando sobre ela) ---
+    if (animal.state === 'swim' || animal.state === 'seek_water' && animal.kind === 'frog') {
+      push({
+        k: 'fill',
+        x: dx, y: dy + Math.round(dh * 0.55),
+        w: dw, h: Math.max(1, Math.round(dh * 0.45)),
+        r: 30, g: 86, b: 120, a: 0.3,
+      });
+      const ripple = 0.35 + 0.25 * Math.sin(timeMs / 260 + animal.quirk * 6);
+      push({ k: 'fill', x: gx - 11, y: gy - 2, w: 22, h: 1, r: 200, g: 228, b: 245, a: 0.3 * ripple });
+      push({ k: 'fill', x: gx - 7, y: gy + 1, w: 14, h: 1, r: 200, g: 228, b: 245, a: 0.22 * ripple });
+    }
+
+    // --- sono: dois "z" minúsculos (leitura imediata de descanso) ----------
+    // desenhados como 3 traços de 1 px: topo, diagonal, base — não é sprite novo
+    if (anim === 'sleep' && !dead) {
+      const tick = Math.floor(timeMs / 620) % 2;
+      const zs: Array<[number, number, number]> = [[5, 4, 0.6], [9, 8, 0.4]];
+      for (const [ox, oy, a] of zs) {
+        const zx = gx + ox;
+        const zy = gy - dh - oy - tick;
+        push({ k: 'fill', x: zx, y: zy, w: 3, h: 1, r: 230, g: 238, b: 245, a });
+        push({ k: 'fill', x: zx + 1, y: zy + 1, w: 1, h: 1, r: 230, g: 238, b: 245, a });
+        push({ k: 'fill', x: zx, y: zy + 2, w: 3, h: 1, r: 230, g: 238, b: 245, a });
+      }
+    }
+
+    // --- fuga: poeira levantada atrás de quem corre no chão -----------------
+    if (!dead && (anim === 'run' || anim === 'jump') && animal.kind !== 'bird' && Math.hypot(animal.vx, animal.vy) > 20) {
+      const kick = Math.abs(Math.sin(animal.animPhase * 2.2));
+      if (kick > 0.45) {
+        // poeira ATRÁS do bicho, no sentido oposto ao da direção desenhada
+        const bx = dir === 'e' ? -1 : dir === 'w' ? 1 : 0;
+        const by = dir === 's' ? -1 : dir === 'n' ? 1 : 0;
+        const a = 0.22 * kick;
+        push({
+          k: 'fill',
+          x: gx + bx * Math.round(dw * 0.3) - (by !== 0 ? 1 : 0),
+          y: gy - 2 + by,
+          w: 2, h: 1, r: 196, g: 176, b: 132, a,
+        });
+        push({
+          k: 'fill',
+          x: gx + bx * Math.round(dw * 0.55) - (by !== 0 ? 2 : 0),
+          y: gy - 4 + by * 2,
+          w: 1, h: 1, r: 196, g: 176, b: 132, a: a * 0.7,
+        });
+      }
+    }
+
+    // --- dor: pose de sobressalto + faíscas de impacto ---------------------
+    if (!dead && (animal.hurtTimer ?? 0) > 0) {
+      const blink = Math.sin(timeMs / 70) > 0 ? 1 : 0.45;
+      const ox = Math.round(hash2(animal.id, 7, 3, 1101) * 8) - 4;
+      const oy = Math.round(hash2(animal.id, 8, 3, 1102) * 6) - 3;
+      push({ k: 'fill', x: gx + ox, y: dy + Math.round(dh * 0.35) + oy, w: 2, h: 2, r: 244, g: 92, b: 74, a: 0.6 * blink });
+      push({ k: 'fill', x: gx - ox, y: dy + Math.round(dh * 0.6) - oy, w: 1, h: 1, r: 255, g: 214, b: 170, a: 0.55 * blink });
+    }
+
+    // --- bote da cobra: brilho no focinho no instante do ataque ------------
+    if (anim === 'attack' && !dead) {
+      const tick = Math.sin(timeMs / 45) > 0 ? 1 : 0;
+      // brilho na CABEÇA do bote: a direção desenhada indica onde ela está
+      const hx = dir === 'e' ? Math.round(dw * 0.32) : dir === 'w' ? -Math.round(dw * 0.32) : 0;
+      const hy = dir === 's' ? Math.round(dh * 0.35) : dir === 'n' ? -Math.round(dh * 0.25) : Math.round(dh * 0.5) - 6;
+      push({ k: 'fill', x: gx + hx - 1, y: dy + hy, w: 2, h: 1, r: 250, g: 226, b: 168, a: tick ? 0.75 : 0.35 });
+    }
+
+    // --- carcaça: restos escuros e moscas (decomposição visível) -----------
+    if (dead) {
+      if (decay > CORPSE_DECAY_HOURS) {
+        const sx = Math.round(hash2(animal.id, 11, 5, 1111) * 8) - 4;
+        const sy = Math.round(hash2(animal.id, 12, 5, 1112) * 4) - 2;
+        push({ k: 'fill', x: gx + sx, y: dy + Math.round(dh * 0.55) + sy, w: 2, h: 2, r: 38, g: 30, b: 20, a: 0.55 * fade });
+        push({ k: 'fill', x: gx - sx, y: dy + Math.round(dh * 0.75) - sy, w: 2, h: 1, r: 38, g: 30, b: 20, a: 0.45 * fade });
+      }
+      if (decay > 0.6) {
+        const fly = Math.floor(timeMs / 420) % 2;
+        push({ k: 'fill', x: gx + 5 + fly, y: dy + 2 - fly * 2, w: 1, h: 1, r: 216, g: 206, b: 150, a: 0.5 * fade });
+        push({ k: 'fill', x: gx - 6 + fly * 2, y: dy + 5, w: 1, h: 1, r: 216, g: 206, b: 150, a: 0.4 * fade });
+      }
+    }
   }
 }
 

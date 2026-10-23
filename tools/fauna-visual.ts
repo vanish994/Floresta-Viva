@@ -13,7 +13,7 @@ import { SoftwareRenderer, type SpriteSource } from './software';
 import { allAssetFiles } from '../src/render/manifest';
 import { composeScene } from '../src/render/scene';
 import { World } from '../src/world/world';
-import { seedFauna, makeAnimal, type Animal } from '../src/world/fauna';
+import { seedFauna, makeAnimal, type Animal, type Facing4 } from '../src/world/fauna';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const arg = (n: string, d: string) => {
@@ -63,15 +63,16 @@ function main(): void {
   const pick = (kind: Animal['kind']) => animals.find((a) => a.kind === kind);
   const make = (kind: Animal['kind'], dx: number, state: Animal['state'], extra: Partial<Animal> = {}): Animal => {
     const src = pick(kind);
+    const { y: dy, ...rest } = extra;
     return {
       ...(src ?? makeAnimal({ id: kind.length * 7, kind, chunk, x: 0, y: 0, quirk: 0.6, energy: 0.8 })),
       id: kind.length * 100 + Math.round(dx),
       x: baseX + dx,
-      y: baseY + (extra.y ?? 0),
+      y: baseY + (dy ?? 0),
       state,
       animPhase: 2,
       facing: 1,
-      ...extra,
+      ...rest,
     };
   };
   showcase.push(make('rabbit', 0, 'idle'));
@@ -86,10 +87,41 @@ function main(): void {
   showcase.push(make('snake', 495, 'chase')); // perseguindo o sapo
   showcase.push(make('snake', 560, 'rest'));
   showcase.push(make('snake', 625, 'hide'));
+
+  // --- segunda faixa: estados "de leitura difícil" antes desta etapa --------
+  // sono (z), dor (faísca/linha hurt), carcaça (decomposição), fuga da ave e
+  // bote da cobra — todos com os sprites/efeitos reais do jogo
+  const row2 = 84;
+  showcase.push(make('rabbit', 0, 'sleep', { y: row2 }));
+  showcase.push(make('frog', 60, 'idle', { y: row2, inWater: true } as Partial<Animal>));
+  showcase.push(make('snake', 135, 'attack', { y: row2, facing: -1, animPhase: 1 }));
+  showcase.push(make('snake', 215, 'flee', { y: row2, hurtTimer: 0.05, facing: 1 }));
+  showcase.push(make('bird', 290, 'flee', { y: row2, hover: 6 }));
+  showcase.push(make('rabbit', 370, 'dead', { y: row2, health: 0, corpseHours: 0.72 }));
+  showcase.push(make('snake', 440, 'dead', { y: row2, health: 0, corpseHours: 0.6, facing: 1 }));
+  showcase.push(make('bird', 520, 'dead', { y: row2, health: 0, corpseHours: 0.3 }));
+  showcase.push(make('frog', 590, 'flee', { y: row2, facing: -1, vx: 40 }));
   const faunaMap = (world as unknown as { faunaByChunk: Map<string, Animal[]> }).faunaByChunk;
   faunaMap.set('0,0', showcase);
 
-  const cam = { x: baseX - 40, y: baseY - 100, w: 760, h: 150 };
+  // --- terceira faixa: as quatro direções de cada espécie caminhando ---------
+  const row3 = 168;
+  const dirs: Facing4[] = ['n', 's', 'e', 'w'];
+  const kinds: Array<Animal['kind']> = ['rabbit', 'frog', 'snake'];
+  kinds.forEach((kind, ki) => {
+    dirs.forEach((d, di) => {
+      showcase.push(make(kind, 40 + di * 34 + ki * 190, 'wander', {
+        y: row3 + ki * 40,
+        facingDir: d,
+        facing: d === 'w' ? -1 : 1,
+        vx: d === 'e' ? 30 : d === 'w' ? -30 : 0,
+        vy: d === 's' ? 20 : d === 'n' ? -20 : 0,
+        animPhase: 1 + di * 0.5,
+      }));
+    });
+  });
+
+  const cam = { x: baseX - 40, y: baseY - 100, w: 760, h: 380 };
   const scene = composeScene(world, cam, {
     timeMs: 1200,
     player: { x: baseX - 20, y: baseY + 6, moving: false, frame: 0, female: false, facing: 1 },

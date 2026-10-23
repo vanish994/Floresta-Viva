@@ -11,9 +11,11 @@ export interface SpriteDef {
 }
 
 export const TREE_RECTS = {
-  small: [[32, 51, 32, 45], [96, 49, 32, 47], [160, 48, 32, 48], [224, 45, 31, 51], [288, 50, 32, 46]],
-  big: [[34, 9, 60, 55], [97, 9, 61, 55], [161, 4, 61, 60], [228, 1, 58, 63], [289, 4, 61, 60]],
-  bigger: [[36, 0, 88, 128], [131, 1, 90, 127], [228, 2, 83, 126], [328, 0, 76, 128], [420, 2, 83, 126]],
+  small: [[32, 51, 32, 45], [96, 49, 32, 47], [160, 48, 32, 48], [224, 45, 32, 51], [288, 50, 32, 46]],
+  // recortes medidos por componente de alpha (copa + tronco), união das 5
+  // variantes sazonais: as árvores médias têm 87–96 px de altura
+  big: [[34, 8, 61, 88], [97, 8, 61, 88], [161, 3, 61, 93], [228, 0, 60, 96], [289, 3, 61, 93]],
+  bigger: [[36, 0, 88, 128], [131, 1, 90, 127], [228, 2, 83, 126], [328, 0, 79, 128], [420, 2, 83, 126]],
 } as Record<'small' | 'big' | 'bigger', Rect[]>;
 
 export const TREE_FILES = {
@@ -94,76 +96,188 @@ export function insectRect(kind: string, frame: 0 | 1): Rect {
   return [col * 12, 0, 12, 12];
 }
 
-// --- fauna visual: coelho, sapo e ave (spritesheets gerados do reference) ----
+// --- fauna visual: coelho, sapo, ave e cobra ---------------------------------
 /**
- * Cada espécie é uma spritesheet com uma animação por linha; grupos de frames
- * redesenhados por `tools/extract-fauna-sprites.ts`. O tamanho da célula vem do
- * arquivo `.json` ao lado do PNG (mesma pasta, mesmo nome).
+ * Direção no plano (top-down). N = costas, S = frente, L = direita, O = esquerda.
+ * As folhas direcionais têm uma linha por `anim:dir`; o coelho tem as 4 direções
+ * desenhadas, o sapo e a cobra também (a prancha fornece as 4 colunas).
  */
+export type Facing4 = 'n' | 's' | 'e' | 'w';
+
 export interface FaunaSheet {
   file: string;
   cellW: number;
   cellH: number;
   maxFrames: number;
+  /** linha da animação: `idle` (folha de direção única) ou `idle:s` */
   rows: Record<string, number>;
   frameMs: Record<string, number>;
+  /** direções disponíveis (ausente = folha de direção única, usa flip) */
+  dirs?: Facing4[];
+  /**
+   * Tradução de animação LÓGICA → linha da folha. Serve para estados que não
+   * têm arte própria na prancha nova (ex.: sapo nadando usa a linha `walk`,
+   * com a ondulação desenhada no render) — nunca inventa quadro.
+   */
+  alias?: Record<string, string>;
 }
 
 export const FAUNA_SHEETS: Record<'rabbit' | 'frog' | 'bird' | 'snake', FaunaSheet> = {
+  // 4 direções desenhadas: N (costas), S (frente), L e O
   rabbit: {
     file: 'Animals/rabbit.png',
-    cellW: 21, cellH: 17, maxFrames: 6,
-    rows: { idle: 0, walk: 1, run: 2, jump: 3, eat: 4, sleep: 5 },
-    frameMs: { idle: 260, walk: 150, run: 100, jump: 110, eat: 190, sleep: 420 },
+    cellW: 24, cellH: 21, maxFrames: 4,
+    dirs: ['n', 's', 'e', 'w'],
+    rows: {
+      'idle:n': 0, 'idle:s': 1, 'idle:e': 2, 'idle:w': 3,
+      'walk:n': 4, 'walk:s': 5, 'walk:e': 6, 'walk:w': 7,
+      'run:n': 8, 'run:s': 9, 'run:e': 10, 'run:w': 11,
+      'jump:n': 12, 'jump:s': 13, 'jump:e': 14, 'jump:w': 15,
+      'eat:n': 16, 'eat:s': 17, 'eat:e': 18, 'eat:w': 19,
+      'sleep:n': 20, 'sleep:s': 21, 'sleep:e': 22, 'sleep:w': 23,
+      'hurt:n': 24, 'hurt:s': 25, 'hurt:e': 26, 'hurt:w': 27,
+      'death:n': 28, 'death:s': 29, 'death:e': 30, 'death:w': 31,
+    },
+    frameMs: { idle: 260, walk: 150, run: 100, jump: 110, eat: 190, sleep: 420, hurt: 120, death: 220 },
   },
   frog: {
     file: 'Animals/frog.png',
-    cellW: 27, cellH: 15, maxFrames: 5,
-    rows: { idle: 0, jump: 1, swim: 2, eat: 3, sleep: 4 },
-    frameMs: { idle: 300, jump: 140, swim: 150, eat: 220, sleep: 460 },
+    cellW: 24, cellH: 19, maxFrames: 4,
+    dirs: ['n', 's', 'e', 'w'],
+    rows: {
+      'idle:n': 0, 'idle:s': 1, 'idle:e': 2, 'idle:w': 3,
+      'walk:n': 4, 'walk:s': 5, 'walk:e': 6, 'walk:w': 7,
+      'run:n': 8, 'run:s': 9, 'run:e': 10, 'run:w': 11,
+      'jump:n': 12, 'jump:s': 13, 'jump:e': 14, 'jump:w': 15,
+      'eat:n': 16, 'eat:s': 17, 'eat:e': 18, 'eat:w': 19,
+      'sleep:n': 20, 'sleep:s': 21, 'sleep:e': 22, 'sleep:w': 23,
+      'hurt:n': 24, 'hurt:s': 25, 'hurt:e': 26, 'hurt:w': 27,
+      'death:n': 28, 'death:s': 29, 'death:e': 30, 'death:w': 31,
+    },
+    frameMs: { idle: 300, walk: 170, run: 120, jump: 140, eat: 220, sleep: 460, hurt: 120, death: 220 },
+    // a prancha nova não tem quadro de natação: nada com a passada da linha walk
+    // + ondulação/linha d'água desenhadas no render (o comportamento não muda)
+    alias: { swim: 'walk', fly: 'jump', land: 'idle', move: 'walk', attack: 'eat', hide: 'sleep' },
   },
+  // ave: folha antiga (uma direção, sem dor/morte) — segue com flip horizontal
+  // e as animações que existem; o alias cobre os estados que ela não tem
   bird: {
     file: 'Animals/bird.png',
     cellW: 19, cellH: 14, maxFrames: 5,
     rows: { idle: 0, fly: 1, land: 2, eat: 3, sleep: 4 },
     frameMs: { idle: 260, fly: 90, land: 130, eat: 200, sleep: 440 },
+    alias: {
+      death: 'sleep', hurt: 'fly', rest: 'sleep', move: 'idle', walk: 'idle',
+      run: 'fly', jump: 'fly', attack: 'eat', hide: 'sleep', swim: 'idle',
+    },
   },
-  // predador: spritesheet extraída da prancha fornecida (7 animações, até 11 frames)
+  // predador: 10 animações × 4 direções (idle/walk/run/jump/strike/coil/hiss/sleep/hurt/death)
   snake: {
     file: 'Animals/snake.png',
-    cellW: 41, cellH: 20, maxFrames: 11,
-    rows: { idle: 0, move: 1, attack: 2, hide: 3, death: 4, hurt: 5, sleep: 6 },
-    frameMs: { idle: 240, move: 120, attack: 90, hide: 260, death: 160, hurt: 120, sleep: 380 },
+    cellW: 30, cellH: 21, maxFrames: 4,
+    dirs: ['n', 's', 'e', 'w'],
+    rows: {
+      'idle:n': 0, 'idle:s': 1, 'idle:e': 2, 'idle:w': 3,
+      'walk:n': 4, 'walk:s': 5, 'walk:e': 6, 'walk:w': 7,
+      'run:n': 8, 'run:s': 9, 'run:e': 10, 'run:w': 11,
+      'jump:n': 12, 'jump:s': 13, 'jump:e': 14, 'jump:w': 15,
+      'strike:n': 16, 'strike:s': 17, 'strike:e': 18, 'strike:w': 19,
+      'coil:n': 20, 'coil:s': 21, 'coil:e': 22, 'coil:w': 23,
+      'hiss:n': 24, 'hiss:s': 25, 'hiss:e': 26, 'hiss:w': 27,
+      'sleep:n': 28, 'sleep:s': 29, 'sleep:e': 30, 'sleep:w': 31,
+      'hurt:n': 32, 'hurt:s': 33, 'hurt:e': 34, 'hurt:w': 35,
+      'death:n': 36, 'death:s': 37, 'death:e': 38, 'death:w': 39,
+    },
+    frameMs: {
+      idle: 240, walk: 150, run: 120, jump: 130, strike: 90,
+      coil: 300, hiss: 120, sleep: 380, hurt: 120, death: 200,
+    },
+    // recuo/observação usam as poses existentes (nada de quadro inventado)
+    alias: { move: 'walk', hide: 'coil', attack: 'strike', rest: 'coil' },
   },
 };
 
-/** recorte de um quadro da fauna (linha da animação × coluna do frame) */
-export function faunaRect(sheet: FaunaSheet, anim: string, frame: number): Rect {
-  const row = sheet.rows[anim] ?? 0;
-  const count = sheet.rows[anim] !== undefined
-    ? Math.max(1, Math.min(sheet.maxFrames, countFor(sheet, anim)))
-    : 1;
+/** animações de cada folha (a contagem vale para qualquer direção) */
+export const FAUNA_FRAMES: Record<keyof typeof FAUNA_SHEETS, Record<string, number>> = {
+  rabbit: { idle: 4, walk: 4, run: 4, jump: 4, eat: 4, sleep: 4, hurt: 4, death: 4 },
+  frog: { idle: 4, walk: 4, run: 4, jump: 4, eat: 4, sleep: 4, hurt: 4, death: 4 },
+  bird: { idle: 5, fly: 4, land: 4, eat: 4, sleep: 4 },
+  snake: {
+    idle: 4, walk: 4, run: 4, jump: 4, strike: 4,
+    coil: 4, hiss: 4, sleep: 4, hurt: 4, death: 4,
+  },
+};
+
+/** espécie dona de uma folha (o manifesto nunca duplica essa informação) */
+export function faunaKindOf(sheet: FaunaSheet): keyof typeof FAUNA_SHEETS {
+  for (const [kind, s] of Object.entries(FAUNA_SHEETS)) if (s === sheet) return kind as keyof typeof FAUNA_SHEETS;
+  if (sheet.file.includes('rabbit')) return 'rabbit';
+  if (sheet.file.includes('frog')) return 'frog';
+  if (sheet.file.includes('snake')) return 'snake';
+  return 'bird';
+}
+
+/**
+ * Linha efetiva de uma animação LÓGICA na direção pedida.
+ * Devolve também `flip` quando a arte daquela direção não existe e a linha da
+ * direita (L) é espelhada — nunca inventa uma direção.
+ */
+export function faunaRow(
+  sheet: FaunaSheet,
+  anim: string,
+  dir: Facing4 = 's',
+): { row: number; flip: boolean; key: string } | null {
+  const base = sheet.alias?.[anim] ?? anim;
+  const order: Facing4[] = dir === 'w' ? ['w', 'e'] : [dir];
+  for (const d of order) {
+    const key = `${base}:${d}`;
+    const row = sheet.rows[key];
+    if (row !== undefined) return { row, flip: false, key };
+  }
+  // folha de direção única (ave): espelha para O
+  const single = sheet.rows[base];
+  if (single !== undefined) return { row: single, flip: dir === 'w', key: base };
+  // direção ausente na folha: cai na frente (S) e, por último, na idle
+  const south = sheet.rows[`${base}:s`];
+  if (south !== undefined) return { row: south, flip: false, key: `${base}:s` };
+  const idle = sheet.rows[`idle:${dir}`] ?? sheet.rows.idle ?? sheet.rows['idle:s'];
+  if (idle !== undefined) return { row: idle, flip: dir === 'w', key: 'idle' };
+  return null;
+}
+
+/** a folha tem a animação (direta ou por alias)? */
+export function faunaHasAnim(kind: keyof typeof FAUNA_SHEETS, anim: string): boolean {
+  const sheet = FAUNA_SHEETS[kind];
+  if (!sheet) return false;
+  const base = sheet.alias?.[anim] ?? anim;
+  if (sheet.rows[base] !== undefined) return true;
+  return (sheet.dirs ?? []).some((d) => sheet.rows[`${base}:${d}`] !== undefined);
+}
+
+/** nº de frames válido de uma animação (1 se a linha não existir) */
+export function faunaFrameCount(kind: keyof typeof FAUNA_SHEETS, anim: string): number {
+  const sheet = FAUNA_SHEETS[kind];
+  const base = sheet?.alias?.[anim] ?? anim;
+  if (!sheet || !faunaHasAnim(kind, anim)) return 1;
+  return Math.max(1, Math.min(sheet.maxFrames, FAUNA_FRAMES[kind]?.[base] ?? sheet.maxFrames));
+}
+
+/**
+ * Recorte de um quadro da fauna: linha da animação × coluna do frame.
+ * `dir` escolhe a linha da direção (coelho/sapo/cobra); folhas de direção
+ * única ignoram a direção e o chamador usa `faunaRow(...).flip`.
+ */
+export function faunaRect(sheet: FaunaSheet, anim: string, frame: number, dir: Facing4 = 's'): Rect {
+  const resolved = faunaRow(sheet, anim, dir);
+  const row = resolved?.row ?? 0;
+  const count = faunaFrameCount(faunaKindOf(sheet), anim);
   const col = ((frame % count) + count) % count;
   return [col * sheet.cellW, row * sheet.cellH, sheet.cellW, sheet.cellH];
 }
 
-/** nº de frames de uma animação (mantido fora do JSON para ficar tipado) */
-const FAUNA_FRAMES: Record<string, Record<string, number>> = {
-  rabbit: { idle: 6, walk: 6, run: 5, jump: 5, eat: 6, sleep: 5 },
-  frog: { idle: 4, jump: 4, swim: 5, eat: 4, sleep: 4 },
-  bird: { idle: 5, fly: 4, land: 4, eat: 4, sleep: 4 },
-  snake: { idle: 11, move: 11, attack: 8, hide: 9, death: 7, hurt: 7, sleep: 8 },
-};
-
-function countFor(sheet: FaunaSheet, anim: string): number {
-  const key = sheet.file.includes('rabbit')
-    ? 'rabbit'
-    : sheet.file.includes('frog')
-      ? 'frog'
-      : sheet.file.includes('snake')
-        ? 'snake'
-        : 'bird';
-  return FAUNA_FRAMES[key]?.[anim] ?? sheet.maxFrames;
+/** deve espelhar o quadro? (só quando a folha não tem a direção desenhada) */
+export function faunaFlip(sheet: FaunaSheet, anim: string, dir: Facing4 = 's'): boolean {
+  return faunaRow(sheet, anim, dir)?.flip ?? dir === 'w';
 }
 
 export const SPRITES: Record<string, SpriteDef> = {

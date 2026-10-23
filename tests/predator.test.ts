@@ -21,7 +21,7 @@ import {
   MAX_CHASE_HOURS,
   type Animal,
 } from '../src/world/fauna';
-import { FAUNA_SHEETS, faunaRect } from '../src/render/manifest';
+import { FAUNA_SHEETS, faunaRect, faunaHasAnim } from '../src/render/manifest';
 import { composeScene } from '../src/render/scene';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -95,15 +95,19 @@ describe('cobra: sprites e escala', () => {
     }
     expect(transparent).toBeGreaterThan(0); // fundo transparente real
     expect(partial).toBe(0); // alpha binário (sem halo)
-    // só animações que existem no asset
+    // só animações que existem no asset, nas QUATRO direções desenhadas
     for (const anim of ['idle', 'move', 'attack', 'hide', 'death', 'hurt', 'sleep']) {
-      expect(sheet.rows[anim]).toBeDefined();
-      const r = faunaRect(sheet, anim, 0);
-      expect(r[2]).toBeGreaterThan(0);
-      expect(r[3]).toBeGreaterThan(0);
+      expect(faunaHasAnim('snake', anim)).toBe(true);
+      for (const dir of ['n', 's', 'e', 'w'] as const) {
+        const r = faunaRect(sheet, anim, 0, dir);
+        expect(r[2]).toBeGreaterThan(0);
+        expect(r[3]).toBeGreaterThan(0);
+      }
     }
-    // escala compatível: menor que o coelho em altura de célula, mas visível
-    expect(sheet.cellH).toBeLessThanOrEqual(FAUNA_SHEETS.rabbit.cellH + 8);
+    // peso de predador: 10 animações × 4 direções numa folha só
+    expect(Object.keys(sheet.rows).length).toBe(40);
+    // escala compatível: mesma faixa de célula do coelho, mas visível
+    expect(Math.abs(sheet.cellH - FAUNA_SHEETS.rabbit.cellH)).toBeLessThanOrEqual(2);
     expect(sheet.cellH).toBeGreaterThan(10);
   });
 });
@@ -173,7 +177,7 @@ describe('cobra: nascer e perceber', () => {
 });
 
 describe('cobra: caça, morte e saciedade', () => {
-  it('5. atacar reduz a saúde da presa; ao morrer ela sai do pool e vira matéria orgânica', () => {
+  it('5. atacar reduz a saúde da presa; ao morrer ela fica como carcaça e depois vira matéria orgânica', () => {
     const frog = makeAnimal({ id: 2, kind: 'frog', chunk: habitableChunk(), x: 0, y: 0 });
     const h0 = frog.health;
     applyPredationDamage(frog, 0.3);
@@ -182,13 +186,18 @@ describe('cobra: caça, morte e saciedade', () => {
     expect(frog.health).toBe(0);
 
     const c = habitableChunk();
-    const litter0 = c.litter.reduce((a, b) => a + b, 0);
     const snake = makeAnimal({ id: 1, kind: 'snake', chunk: c, x: 5 * CELL, y: 5 * CELL, hunger: 0.95 });
     const prey = makeAnimal({ id: 2, kind: 'frog', chunk: c, x: 5.2 * CELL, y: 5 * CELL, hunger: 0.2 });
-    const { alive } = sandbox([snake, prey], 200, 200);
-    expect(alive.some((a) => a.id === prey.id)).toBe(false); // presa removida do pool
-    const litter1 = c.litter.reduce((a, b) => a + b, 0);
-    expect(litter1).toBeGreaterThanOrEqual(litter0); // carcaça virou matéria orgânica
+    // 200 quadros (≈40 s reais ≈ 0,66 h de jogo): a presa já morreu, mas a
+    // CARCAÇA continua no mundo (imóvel) até CORPSE_HOURS
+    const { world, chunk, alive } = sandbox([snake, prey], 200, 200);
+    const corpse = alive.find((a) => a.id === prey.id);
+    expect(corpse?.state).toBe('dead');
+    expect(corpse?.vx).toBe(0);
+    expect(corpse?.vy).toBe(0);
+    // mais 80 s (≈1,3 h de jogo): decomposta, sai do pool e o solo herda matéria
+    for (let i = 0; i < 400; i++) world.update(200);
+    expect(world.faunaAt(chunk).some((a) => a.id === prey.id)).toBe(false); // virou solo
   });
 
   it('6. depois de comer, a fome da cobra cai e ela descansa', () => {

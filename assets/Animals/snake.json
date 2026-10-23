@@ -1,25 +1,82 @@
 {
   "cell": [
-    41,
-    20
+    30,
+    21
   ],
-  "maxFrames": 11,
+  "maxFrames": 4,
+  "dirs": [
+    "n",
+    "s",
+    "e",
+    "w"
+  ],
   "anims": {
-    "idle": 11,
-    "move": 11,
-    "attack": 8,
-    "hide": 9,
-    "death": 7,
-    "hurt": 7,
-    "sleep": 8
+    "idle": 4,
+    "walk": 4,
+    "run": 4,
+    "jump": 4,
+    "strike": 4,
+    "coil": 4,
+    "hiss": 4,
+    "sleep": 4,
+    "hurt": 4,
+    "death": 4
   },
-  "frameMs": {
-    "idle": 240,
-    "move": 120,
-    "attack": 90,
-    "hide": 260,
-    "death": 160,
-    "hurt": 120,
-    "sleep": 380
-  }
+  "rows": {
+    "idle:n": 0,
+    "idle:s": 1,
+    "idle:e": 2,
+    "idle:w": 3,
+    "walk:n": 4,
+    "walk:s": 5,
+    "walk:e": 6,
+    "walk:w": 7,
+    "run:n": 8,
+    "run:s": 9,
+    "run:e": 10,
+    "run:w": 11,
+    "jump:n": 12,
+    "jump:s": 13,
+    "jump:e": 14,
+    "jump:w": 15,
+    "strike:n": 16,
+    "strike:s": 17,
+    "strike:e": 18,
+    "strike:w": 19,
+    "coil:n": 20,
+    "coil:s": 21,
+    "coil:e": 22,
+    "coil:w": 23,
+    "hiss:n": 24,
+    "hiss:s": 25,
+    "hiss:e": 26,
+    "hiss:w": 27,
+    "sleep:n": 28,
+    "sleep:s": 29,
+    "sleep:e": 30,
+    "sleep:w": 31,
+    "hurt:n": 32,
+    "hurt:s": 33,
+    "hurt:e": 34,
+    "hurt:w": 35,
+    "death:n": 36,
+    "death:s": 37,
+    "death:e": 38,
+    "death:w": 39
+  },
+  "mirroredDirs": {
+    "w": [
+      "idle",
+      "walk",
+      "run",
+      "jump",
+      "strike",
+      "coil",
+      "hiss",
+      "sleep",
+      "hurt",
+      "death"
+    ]
+  },
+  "source": "tools/data/snake-dir-reference.png"
 }

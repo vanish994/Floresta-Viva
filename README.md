@@ -14,7 +14,7 @@ decomposição, erosão, clima, estações) evoluem em frequências separadas do
 ```bash
 npm install
 npm run dev          # abre o jogo (Vite em 0.0.0.0:5173)
-npm test             # 156 testes (determinismo, continuidade, hidrologia, água, erosão, natação, ecossistema, tempo, chunks, persistência)
+npm test             # 196 testes (determinismo, continuidade, hidrologia, água, erosão, natação, ecossistema, tempo, chunks, persistência)
 npm run preview:world  # validação visual headless: renderiza PNGs reais + mapas de campos
 npm run scenario:water # cenário reproduzível da física da água (volumes + orçamento)
 npm run scenario:erosion # cenário reproduzível de erosão/sedimentação/margens
@@ -118,12 +118,20 @@ O jogo é jogável no celular (toque), não só no desktop:
   fome/sede/saúde que come recursos reais, defeca matéria orgânica e dispersa
   sementes. Ver [`docs/EVOLUCAO_CAUSAL.md`](docs/EVOLUCAO_CAUSAL.md).
 - **Fauna visual**: coelho (vegetação/grama), sapo (água/margem), ave (árvores) e
-  **cobra predadora** (emboscada, bote, desiste de perseguições longas) com IA
-  compartilhada (percepção → necessidades → memória → decisão) e cadeia
-  alimentar presa/predador,
+  **cobra predadora** (emboscada, bote único com cooldown, desiste de
+  perseguições longas) com IA compartilhada (percepção → necessidades → memória
+  → decisão), curva de atividade por espécie (dia/noite) e cadeia alimentar
+  presa/predador,
   com estados idle/wander/seek/eat/flee/rest/sleep, fuga do jogador, hábitos
   diurno/noturno e sprites extraídos da prancha fornecida em pixel art 1:1
-  (coelho 21×17, sapo 27×15, ave 19×14). Ver [`docs/FAUNA.md`](docs/FAUNA.md).
+  (coelho 21×17, sapo 27×15, ave 19×14). Os estados da IA têm leitura visual
+  própria: fuga com poeira, natação com ondulação, sono com "z", dor com
+  faísca, bote com brilho e **carcaça imóvel que se decompõe no chão**; render
+  com LOD para o resto da tela. Coelho, sapo e cobra têm **4 direções
+  desenhadas** (N/S/L/O) — a direção vem do vetor de movimento, com histerese,
+  e a coluna Oeste das pranchas que vinha repetindo a Leste foi corrigida (o
+  bicho não "anda para a direita" indo para a esquerda). Ver
+  [`docs/FAUNA.md`](docs/FAUNA.md).
 - **Fauna abstrata**: modelo de atividade (alimento/água/abrigo/hora/estação) que já alimenta a
   dispersão de sementes; interfaces `FaunaAgent`/`FaunaSystem` para agentes visuais futuros.
 - **Persistência** versionada em `localStorage` com diffs (plantas removidas/recrutadas,

@@ -32,6 +32,7 @@ import {
   seedFauna,
   stepFauna,
   applyPredationDamage,
+  CORPSE_HOURS,
   FAUNA_CAP,
   type Animal,
 } from './fauna';
@@ -497,7 +498,15 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
       const key = chunkKeyStr(chunk.cx, chunk.cy);
       const animals = this.faunaByChunk.get(key);
       if (!animals || animals.length === 0) continue;
-      const deaths: number[] = [];
+      // vizinhança do chunk + anel de 8 chunks (montada uma vez por frame)
+      const neighbourhood: Animal[] = animals.slice();
+      for (let oy = -1; oy <= 1; oy++) {
+        for (let ox = -1; ox <= 1; ox++) {
+          if (ox === 0 && oy === 0) continue;
+          const other = this.faunaByChunk.get(chunkKeyStr(chunk.cx + ox, chunk.cy + oy));
+          if (other) for (const a of other) neighbourhood.push(a);
+        }
+      }
       stepFauna(animals, cfg, gameHours, {
         worldDay: dayFloat,
         hour,
@@ -538,29 +547,19 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
           target.ecoDirty = true;
           return { species: eaten.species };
         },
-        onDeath: (dead) => deaths.push(dead.id),
+        // morte = evento (a carcaça continua no mundo até `CORPSE_HOURS`)
+        onDeath: () => {},
         // --- percepção de criaturas (predador/presa) ----------------------
+        // A lista do chunk + 8 vizinhos é montada UMA vez por frame; cada
+        // animal só filtra por raio. Evita varrer o mapa por animal.
         nearbyAnimals: (self, radius) => {
           const r2 = radius * radius;
           const out: Animal[] = [];
-          for (const other of animals) {
-            if (other === self) continue;
+          for (const other of neighbourhood) {
+            if (other === self || other.state === 'dead') continue;
             const dx = other.x - self.x;
             const dy = other.y - self.y;
             if (dx * dx + dy * dy <= r2) out.push(other);
-          }
-          // vizinhos imediatos (fronteira do chunk) também são percebidos
-          for (let oy = -1; oy <= 1; oy++) {
-            for (let ox = -1; ox <= 1; ox++) {
-              if (ox === 0 && oy === 0) continue;
-              const other = this.faunaByChunk.get(chunkKeyStr(chunk.cx + ox, chunk.cy + oy));
-              if (!other) continue;
-              for (const a of other) {
-                const dx = a.x - self.x;
-                const dy = a.y - self.y;
-                if (dx * dx + dy * dy <= r2) out.push(a);
-              }
-            }
           }
           return out;
         },
@@ -569,25 +568,46 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
           const wasAlive = prey.state !== 'dead';
           applyPredationDamage(prey, amount, undefined);
           if (prey.health <= 0.02 && wasAlive) {
+            // o corpo NÃO desaparece: fica imóvel como carcaça por
+            // CORPSE_HOURS (render desenha a morte) e vai virando solo
             prey.state = 'dead';
+            prey.corpseHours = 0;
             prey.timer = 0;
-            // carcaça devolve matéria orgânica ao solo (o ecossistema continua)
+            prey.vx = 0;
+            prey.vy = 0;
             const cellPx = cfg.simCellTiles * cfg.tileSize;
             const pc = prey.chunk;
             const i = pc.cellIdx(
               clamp(Math.floor(prey.x / cellPx) - pc.cx * pc.n, 0, pc.n - 1),
               clamp(Math.floor(prey.y / cellPx) - pc.cy * pc.n, 0, pc.n - 1),
             );
-            pc.litter[i] = Math.min(16, pc.litter[i] + 0.9);
-            pc.coarse[i] = Math.min(6, pc.coarse[i] + 0.5);
-            pc.nAvail[i] += 0.05;
+            pc.litter[i] = Math.min(16, pc.litter[i] + 0.6);
+            pc.coarse[i] = Math.min(6, pc.coarse[i] + 0.3);
+            pc.nAvail[i] += 0.03;
             pc.soilDirty = true;
-            deaths.push(prey.id);
           }
         },
       });
-      if (deaths.length > 0) {
-        this.faunaByChunk.set(key, animals.filter((a) => !deaths.includes(a.id)));
+      // --- carcaças: depois de decompostas viram solo (o resto da matéria) ---
+      let corpses: Animal[] | null = null;
+      for (const a of animals) {
+        if (a.state !== 'dead' || (a.corpseHours ?? 0) < CORPSE_HOURS) continue;
+        const cellPx = cfg.simCellTiles * cfg.tileSize;
+        const pc = a.chunk;
+        const i = pc.cellIdx(
+          clamp(Math.floor(a.x / cellPx) - pc.cx * pc.n, 0, pc.n - 1),
+          clamp(Math.floor(a.y / cellPx) - pc.cy * pc.n, 0, pc.n - 1),
+        );
+        pc.litter[i] = Math.min(16, pc.litter[i] + 0.8);
+        pc.coarse[i] = Math.min(6, pc.coarse[i] + 0.3);
+        pc.nAvail[i] += 0.04;
+        pc.pAvail[i] += 0.01;
+        pc.soilDirty = true;
+        (corpses ??= []).push(a);
+      }
+      if (corpses) {
+        const gone = new Set(corpses.map((a) => a.id));
+        this.faunaByChunk.set(key, animals.filter((a) => !gone.has(a.id)));
       }
     }
 
@@ -648,7 +668,8 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
   ): void {
     const cfg = this.cfg;
     const counts = { rabbit: 0, frog: 0, bird: 0, snake: 0 } as Record<string, number>;
-    for (const a of animals) counts[a.kind] = (counts[a.kind] ?? 0) + 1;
+    // carcaças não contam para o teto nem servem de presa: só bicho vivo ocupa vaga
+    for (const a of animals) if (a.state !== 'dead') counts[a.kind] = (counts[a.kind] ?? 0) + 1;
     let forage = 0;
     for (let i = 0; i < chunk.forage.length; i++) forage += chunk.forage[i];
     forage /= Math.max(1, chunk.n * chunk.n);

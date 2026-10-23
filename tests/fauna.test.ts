@@ -17,7 +17,7 @@ import {
   type Animal,
   type FaunaState,
 } from '../src/world/fauna';
-import { FAUNA_SHEETS, faunaRect, allAssetFiles } from '../src/render/manifest';
+import { FAUNA_SHEETS, faunaRect, faunaHasAnim, allAssetFiles } from '../src/render/manifest';
 import { composeScene } from '../src/render/scene';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -184,33 +184,43 @@ describe('fauna visual', () => {
       ['rabbit', 'flee', true, 0, 'run'],
       ['rabbit', 'eat', false, 0, 'eat'],
       ['rabbit', 'sleep', false, 0, 'sleep'],
-      ['frog', 'flee', true, 0, 'jump'],
+      ['rabbit', 'dead', false, 0, 'death'],
+      ['frog', 'flee', true, 0, 'run'],
       ['frog', 'idle', false, 1, 'swim'],
+      ['frog', 'dead', false, 0, 'death'],
       ['bird', 'fly', true, 0, 'fly'],
       ['bird', 'land', false, 0, 'land'],
       ['bird', 'eat', false, 0, 'eat'],
+      ['snake', 'chase', true, 0, 'move'],
+      ['snake', 'attack', false, 0, 'attack'],
+      ['snake', 'dead', false, 0, 'death'],
     ];
     for (const [kind, state, moving, water, expected] of cases) {
       const anim = animFor(kind, state, moving, water > 0);
       expect(anim).toBe(expected);
-      expect(sheets[kind].rows[anim]).toBeDefined(); // a linha existe na folha
-      const rect = faunaRect(sheets[kind], anim, 0);
-      expect(rect[2]).toBeGreaterThan(0);
-      expect(rect[3]).toBeGreaterThan(0);
+      // a animação existe na folha (linha direta ou alias) e o recorte é válido
+      expect(faunaHasAnim(kind, anim)).toBe(true);
+      for (const dir of ['n', 's', 'e', 'w'] as const) {
+        const rect = faunaRect(sheets[kind], anim, 0, dir);
+        expect(rect[2]).toBeGreaterThan(0);
+        expect(rect[3]).toBeGreaterThan(0);
+      }
     }
   });
 
   it('7. escala: animais pequenos em relação ao personagem', () => {
-    // personagem tem ~29 px de altura no sheet; coelho 17, sapo 15, ave 14 e a
-    // cobra enrolada 20 (é mais larga do que alta, mas nunca "gigante")
-    expect(FAUNA_SHEETS.rabbit.cellH).toBe(17);
-    expect(FAUNA_SHEETS.frog.cellH).toBe(15);
+    // personagem tem ~29 px de altura no sheet. As folhas direcionais usam
+    // células de 24×21 (coelho), 24×19 (sapo), 30×21 (cobra) e 19×14 (ave):
+    // todas cabem em ~1 tile de 32 px e ficam abaixo do personagem.
+    expect(FAUNA_SHEETS.rabbit.cellH).toBe(21);
+    expect(FAUNA_SHEETS.frog.cellH).toBe(19);
     expect(FAUNA_SHEETS.bird.cellH).toBe(14);
-    expect(FAUNA_SHEETS.snake.cellH).toBe(20);
+    expect(FAUNA_SHEETS.snake.cellH).toBe(21);
     const playerHeight = 29;
     for (const sheet of Object.values(FAUNA_SHEETS)) {
-      expect(sheet.cellH).toBeLessThan(playerHeight * 0.75); // nunca "gigante"
+      expect(sheet.cellH).toBeLessThan(playerHeight); // nunca "gigante"
       expect(sheet.cellH).toBeGreaterThan(10); // e visível (não 1–2 px)
+      expect(sheet.cellW).toBeLessThanOrEqual(30); // cabe em ~1 tile de 32 px
     }
   });
 
@@ -299,7 +309,7 @@ describe('fauna visual', () => {
     // escala nativa 1:1 — proporção preservada, sem esticar e sem ficar gigante
     expect(b.dw).toBe(b.sw);
     expect(b.dh).toBe(b.sh);
-    expect(b.dh).toBeLessThan(29 * 0.65); // sempre menor que o personagem
+    expect(b.dh).toBeLessThan(29); // sempre menor que o personagem
     // "y-sort": a op do animal existe entre as ops de chão e as de clima
     const idx = scene.ops.indexOf(b);
     expect(idx).toBeGreaterThan(0);
