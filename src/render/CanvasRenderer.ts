@@ -32,32 +32,49 @@ export class CanvasRenderer {
         }
       };
       for (const f of files) {
+        // Uma imagem de rede/cache pode nunca disparar load nem error em alguns
+        // navegadores móveis. Cada arquivo tem uma conclusão única e watchdog.
+        let completed = false;
+        const finish = (failed: boolean) => {
+          if (completed) return;
+          completed = true;
+          clearTimeout(watchdog);
+          if (failed) this.failedFiles.push(f);
+          this.pending--;
+          if (this.pending <= 0) {
+            this.ready = true;
+            resolve();
+          }
+        };
+        const watchdog = setTimeout(() => finish(true), 12000);
         const fetchSprite = (url: string, retry: boolean) => {
+          if (completed) return;
           const img = new Image();
           img.onload = () => {
-          try {
-            const cv = document.createElement('canvas');
-            cv.width = img.naturalWidth;
-            cv.height = img.naturalHeight;
-            const c = cv.getContext('2d', { willReadFrequently: true })!;
-            c.drawImage(img, 0, 0);
-            const id = c.getImageData(0, 0, cv.width, cv.height);
-            sanitizeShadow(id.data);
-            c.putImageData(id, 0, 0);
-            this.images.set(f, cv);
-          } catch {
-            /* mantém sem sanitizar se algo falhar */
-          }
+            if (completed) return;
+            try {
+              const cv = document.createElement('canvas');
+              cv.width = img.naturalWidth;
+              cv.height = img.naturalHeight;
+              const c = cv.getContext('2d', { willReadFrequently: true })!;
+              c.drawImage(img, 0, 0);
+              const id = c.getImageData(0, 0, cv.width, cv.height);
+              sanitizeShadow(id.data);
+              c.putImageData(id, 0, 0);
+              this.images.set(f, cv);
+            } catch {
+              /* mantém sem sanitizar se algo falhar */
+            }
             this.loadedCount++;
-            done();
+            finish(false);
           };
           img.onerror = () => {
-            // 404 cacheado no celular é teimoso: tenta 1x com cache-buster
+            if (completed) return;
+            // 404/cache ruim no celular: tenta uma vez sem reutilizar o cache.
             if (retry) {
               fetchSprite(`${url}${url.includes('?') ? '&' : '?'}cb=${Date.now()}`, false);
             } else {
-              this.failedFiles.push(f);
-              done();
+              finish(true);
             }
           };
           img.src = url;
