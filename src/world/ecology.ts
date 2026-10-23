@@ -26,11 +26,31 @@ export const plantAge = (p: PlantRecord, worldDay: number): number => p.birthAge
 export function plantHealth(p: PlantRecord, chunk: Chunk, cfg: WorldConfig, worldDay: number): number {
   const lx = clamp(Math.floor(p.x / (cfg.simCellTiles * cfg.tileSize)) - chunk.cx * chunk.n, 0, chunk.n - 1);
   const ly = clamp(Math.floor(p.y / (cfg.simCellTiles * cfg.tileSize)) - chunk.cy * chunk.n, 0, chunk.n - 1);
-  const stress = chunk.stress[chunk.cellIdx(lx, ly)];
+  const i = chunk.cellIdx(lx, ly);
+  const stress = chunk.stress[i];
   const age = plantAge(p, worldDay);
   const sp = SPECIES[p.species];
   const senescence = smoothstep(sp.longevity * 0.8, sp.longevity, age);
-  return clamp(1 - stress * 0.55 - senescence * 0.8, 0.05, 1);
+
+  // --- limitação por luz: espécie heliófila sofre na sombra (e vice-versa) ---
+  const light = chunk.light ? clamp(chunk.light[i], 0, 1) : 1;
+  const lightNeed = clamp(sp.lightNeed, 0, 1);
+  const shadeTol = clamp(sp.shadeTolerance, 0, 1);
+  // deficit = luz abaixo do que a espécie precisa, descontada a tolerância à sombra
+  const lightDeficit = clamp(lightNeed - light - shadeTol * 0.35, 0, 1);
+  // --- limitação nutricional: N/P/K disponíveis na célula -------------------
+  const nutrients = chunk.nAvail ? clamp(
+    (chunk.nAvail[i] * 0.55 + chunk.pAvail[i] * 2.2 + chunk.kAvail[i] * 0.35) / 0.9,
+    0,
+    1,
+  ) : 1;
+  const nutrientDeficit = clamp(1 - nutrients, 0, 1);
+
+  return clamp(
+    1 - stress * 0.55 - senescence * 0.8 - lightDeficit * 0.35 - nutrientDeficit * 0.28,
+    0.05,
+    1,
+  );
 }
 
 export function plantSize(p: PlantRecord, chunk: Chunk, cfg: WorldConfig, worldDay: number): number {
@@ -83,6 +103,15 @@ const SOIL_WATER_CAPACITY = 0.35;
  * antigo duplo roteamento (stepWater + stepRainwater, removido) e mantém um único
  * caminho de massa para a água superficial.
  */
+export interface SoilWaterFlux {
+  /** água evaporada do solo para a atmosfera (m somados por célula) */
+  evaporation: number;
+  /** água transpirada pela vegetação (m somados por célula) */
+  transpiration: number;
+  /** água que escoou superficialmente (m somados por célula) */
+  runoff: number;
+}
+
 export function stepWater(
   chunk: Chunk,
   cfg: WorldConfig,
@@ -90,10 +119,14 @@ export function stepWater(
   hours: number,
   worldDay: number,
   nb: Neighborhood,
+  /** chuva efetiva 0..1; ausente = climatologia (`climate.rainIntensity`) */
+  rainOverride?: number,
+  /** acumulador opcional de fluxos (alimenta o ciclo atmosférico) */
+  flux?: SoilWaterFlux,
 ): void {
   void nb; // a água superficial é roteada pelo solver global (entre chunks)
   const n = chunk.n;
-  const rainIntensity = climate.rainIntensity(worldDay);
+  const rainIntensity = rainOverride ?? climate.rainIntensity(worldDay);
   const rainDepth = rainIntensity * cfg.rainPerHour * hours; // m por célula
   const temp = climate.temperature(worldDay, (worldDay % 1) * 24, 0.3);
 
@@ -114,23 +147,34 @@ export function stepWater(
 
       const soil = chunk.soilType[i];
       const saturation = clamp(chunk.moisture[i], 0, 1);
+      // capacidade real da célula: solo raso/arenoso guarda menos, orgânico mais
+      const capacity = Math.max(0.15, chunk.waterCapacity[i] || SOIL_WATER_CAPACITY);
+      const compaction = clamp(chunk.compaction[i] ?? 0, 0, 1);
+      // compactação fecha os poros: infiltra menos e escorre mais
       const infilCapacity =
         SOIL_KSAT[soil] *
         hours *
         (0.4 + 0.6 * clamp(chunk.soilDepth[i] / 1.4, 0, 1)) *
+        capacity *
+        (1 - compaction * 0.75) *
         (1 - saturation * 0.95);
       const infiltrated = Math.min(through, Math.max(0, infilCapacity));
       const runoff = through - infiltrated;
       // escoamento superficial pendente: o solver o move pela gravidade
       chunk.surfaceInput[i] += runoff + drip;
+      if (flux) flux.runoff += runoff + drip;
 
-      let m = saturation + infiltrated / SOIL_WATER_CAPACITY;
-      // evaporação do solo + transpiração da copa
+      let m = saturation + infiltrated / capacity;
+      // evaporação do solo + transpiração da copa (perdem água do solo)
       const evap = hours * (0.0009 + 0.0009 * clamp(temp / 30, 0, 1)) * (1 - canopy * 0.6);
       const transp = hours * 0.0016 * canopy * clamp(temp / 25, 0.2, 1.2);
-      m -= (evap + transp) / SOIL_WATER_CAPACITY;
-      // percolação profunda (saída lenta; não "some" sem registro no balanço)
-      m -= hours * 0.0015 * m * (soil === SOIL_SAND ? 1.6 : soil === SOIL_ROCK ? 1.2 : 0.7);
+      if (flux) {
+        flux.evaporation += evap * capacity;
+        flux.transpiration += transp * capacity;
+      }
+      m -= (evap + transp) / capacity;
+      // percolação profunda (saída lenta; solo saturado drena mais)
+      m -= hours * 0.0015 * m * (soil === SOIL_SAND ? 1.6 : soil === SOIL_ROCK ? 1.2 : 0.7) * (1 + m);
       chunk.moisture[i] = clamp(m, 0.02, 1);
     }
   }
@@ -159,11 +203,50 @@ export function stepBio(
       const canopy = canopyCoverAt(chunk, cfg, lx, ly, worldDay);
       const moist = chunk.moisture[i];
 
+      // --- luz disponível na célula (sol × copa × nuvens) --------------------
+      const sky = climate.sky(worldDay, (worldDay % 1) * 24);
+      const cloud = climate.cloudCoverNow();
+      const light = clamp(sky.light * (1 - canopy * 0.85) * (1 - cloud * 0.4), 0.02, 1);
+      chunk.light[i] = light;
+
       // --- estresse hídrico: seca = umidade abaixo da demanda ---
       const demand = 0.28 + canopy * 0.2 + clamp(temp / 40, 0, 0.3);
       const deficit = clamp(demand - moist, 0, 1);
       const flood = smoothstep(0.55, 0.9, moist) * (1 - canopy);
-      chunk.stress[i] = clamp(chunk.stress[i] + hours * (deficit * 0.05 + flood * 0.03) - hours * 0.02 * clamp(moist - demand, 0, 1), 0, 2);
+      // --- limitação nutricional (N/P/K) ------------------------------------
+      const nutrients = clamp(
+        (chunk.nAvail[i] * 0.55 + chunk.pAvail[i] * 2.2 + chunk.kAvail[i] * 0.35) / 0.9,
+        0,
+        1,
+      );
+      const nutrientStress = clamp(1 - nutrients, 0, 1) * 0.6;
+      chunk.stress[i] = clamp(
+        chunk.stress[i]
+          + hours * (deficit * 0.05 + flood * 0.03 + nutrientStress * 0.02)
+          - hours * 0.02 * clamp(moist - demand, 0, 1),
+        0,
+        2,
+      );
+
+      // --- camada herbácea (comida de coelho/ave): cresce com luz + água ----
+      // e é limitada pela copa fechada; some no escuro ou na seca.
+      const forageTarget = clamp(
+        smoothstep(0.12, 0.42, moist) * clamp(light * 1.25, 0, 1) * (1 - chunk.waterDepth[i] * 2),
+        0,
+        1,
+      );
+      const forageRate = forageTarget > chunk.forage[i] ? hours * 0.010 : hours * 0.006;
+      chunk.forage[i] = clamp(chunk.forage[i] + (forageTarget - chunk.forage[i]) * Math.min(1, forageRate), 0, 1);
+
+      // --- matéria orgânica grossa (galhos/madeira): decomposição MUITO lenta
+      if (chunk.coarse[i] > 0.0001) {
+        const coarseDecomp = chunk.coarse[i] * chunk.microbe[i] * hours * 0.0006;
+        chunk.coarse[i] = Math.max(0, chunk.coarse[i] - coarseDecomp);
+        chunk.humus[i] = clamp(chunk.humus[i] + coarseDecomp * 0.5, 0, 20);
+        chunk.nAvail[i] += coarseDecomp * 0.04;
+        chunk.pAvail[i] += coarseDecomp * 0.004;
+        chunk.kAvail[i] += coarseDecomp * 0.02;
+      }
 
       // --- liteira: queda de folhas contínua + pulso sazonal das decíduas ---
       let litterIn = 0;
@@ -233,8 +316,9 @@ export function stepBio(
           }
         }
       }
-      const light = 1 - canopy;
+      const openness = 1 - canopy;
       if (pressure > 0.05 && chunk.waterDepth[i] < 0.25) {
+        const light = openness; // recrutamento usa a abertura da copa local
         let best = -1, bestScore = 0;
         for (let sp = 0; sp < SPECIES.length; sp++) {
           const s = speciesFitLocal(sp, moist, chunk.soilType[i], light, temp);

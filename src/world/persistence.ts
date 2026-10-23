@@ -45,11 +45,25 @@ interface SaveData {
   player: { x: number; y: number };
   deltas: [string, number][];
   chunks: Record<string, ChunkDiff>;
+  /** ciclo atmosférico (umidade, nuvens, vento) — mundo contínuo */
+  atmosphere?: {
+    humidity: number;
+    cloudWater: number;
+    cloudCover: number;
+    convection: number;
+    wind: number;
+    precipitation: number;
+  };
   savedAt: number;
 }
 
-const SOIL_FIELDS = ['moisture', 'litter', 'humus', 'nAvail', 'pAvail', 'kAvail', 'pH', 'microbe', 'stress'] as const;
-const SOIL_SCALE = [1, 12, 20, 2, 1, 2, 10, 1, 2]; // faixas máximas de cada campo para quantização 0..255
+const SOIL_FIELDS = [
+  'moisture', 'litter', 'humus', 'nAvail', 'pAvail', 'kAvail', 'pH', 'microbe', 'stress',
+  // evolução: água no solo (capacidade/compactação), camada herbácea e madeira
+  'waterCapacity', 'compaction', 'forage', 'coarse',
+] as const;
+/** faixas máximas de cada campo para quantização 0..255 (mesma ordem) */
+const SOIL_SCALE = [1, 12, 20, 2, 1, 2, 10, 1, 2, 3, 1, 1, 6];
 
 export function saveWorld(world: World, storage: Storage = localStorage): boolean {
   try {
@@ -61,6 +75,7 @@ export function saveWorld(world: World, storage: Storage = localStorage): boolea
       player: { x: world.playerX, y: world.playerY },
       deltas: [...world.terrainDeltas.entries()],
       chunks: {},
+      atmosphere: world.climate.exportAtmosphere(),
       savedAt: Date.now(),
     };
     let count = 0;
@@ -143,6 +158,7 @@ export function loadWorld(world: World, storage: Storage = localStorage): LoadRe
     world.playerY = data.player.y;
     world.terrainDeltas.clear();
     for (const [k, v] of data.deltas) world.terrainDeltas.set(k, v);
+    world.climate.importAtmosphere(data.atmosphere);
     world.pendingDiffs = data.chunks;
     return { applied: true };
   } catch {

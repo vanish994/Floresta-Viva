@@ -815,6 +815,7 @@ function exposeRoots(
     if (roll < Math.min(0.5, 1 - Math.exp(-hazard))) {
       chunk.removedPlants.add(plant.id);
       chunk.litter[i] = Math.min(16, chunk.litter[i] + 1.2 + size * 1.4);
+      chunk.coarse[i] = Math.min(6, chunk.coarse[i] + 0.6 + size * 0.8); // galhos/tronco
       chunk.dirty = true;
       chunk.soilDirty = true;
       budget.uprooted++;

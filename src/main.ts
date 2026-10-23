@@ -175,7 +175,7 @@ function loop(now: number) {
   world.update(dtMs);
 
   // A intensidade vem do mesmo clima que controla as gotas e a física da água.
-  rainAudio.update(world.climate.rainIntensity(world.clock.dayFloat), dt);
+  rainAudio.update(world.climate.precipitationNow(), dt);
 
   const camX = Math.round(player.x - canvas.width / 2);
   const camY = Math.round(player.y - canvas.height / 2);
@@ -216,6 +216,8 @@ function cutTree() {
     const ly = Math.floor(player.y / cellPx) - chunk.cy * chunk.n;
     const i = chunk.cellIdx(lx, ly);
     chunk.litter[i] = Math.min(12, chunk.litter[i] + 1.5);
+    // tronco vira matéria orgânica GROSSA: decompõe devagar, alimenta o solo
+    chunk.coarse[i] = Math.min(6, chunk.coarse[i] + 1.2);
     chunk.soilDirty = true;
     el('hud-save').textContent = 'árvore removida';
   }
@@ -258,10 +260,13 @@ function updateHud(ops: number) {
   const day = c.day;
   const season = world.climate.seasonIndex(c.dayFloat);
   const temp = world.climate.temperature(c.dayFloat, c.hour, 0.3);
-  const rain = world.climate.rainIntensity(c.dayFloat);
+  const rain = world.climate.precipitationNow();
   el('hud-time').textContent = `${c.label} · dia ${day + 1}`;
   el('hud-season').textContent = `${SEASONS[season]} · ${world.climate.dayOfSeason(c.dayFloat).toFixed(0)}º dia`;
-  el('hud-temp').textContent = `${temp.toFixed(1)} °C · ${rain > 0.4 ? 'chuva' : rain > 0.1 ? 'garoa' : 'céu limpo'}`;
+  const rainKind = world.climate.rainKind();
+  const rainLabel = rainKind === 'seco' ? 'céu limpo' : rainKind;
+  el('hud-temp').textContent =
+    `${temp.toFixed(1)} °C · ${rainLabel} · 💧 ${(world.stats.humidity * 100).toFixed(0)}% · ☁ ${(world.stats.cloudCover * 100).toFixed(0)}%`;
   el('hud-seed').textContent = `seed ${world.cfg.seed}`;
   const spr = renderer.failedFiles.length > 0 ? ` · sprites ${renderer.loadedCount}/${spriteTotal} ⚠${renderer.failedFiles.length}` : ` · sprites ${renderer.loadedCount}/${spriteTotal}`;
   const water = world.stats.waterVolume >= 1000 ? `${(world.stats.waterVolume / 1000).toFixed(1)}k m³` : `${world.stats.waterVolume.toFixed(0)} m³`;

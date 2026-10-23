@@ -158,8 +158,16 @@ export interface Animal {
   facing: 1 | -1;
   /** fase da animação (segundos de jogo acumulados andando) */
   animPhase: number;
-  /** 0..1 — fome/sede acumuladas (barato: só alimenta a escolha de estado) */
+  /** 0..1 — fome acumulada (1 = faminto) */
   hunger: number;
+  /** 0..1 — sede acumulada (1 = com muita sede) */
+  thirst: number;
+  /** 0..1 — saúde; cai com fome/sede extremas e leva à morte */
+  health: number;
+  /** horas até defecar (fezes devolvem matéria orgânica ao solo) */
+  poopTimer: number;
+  /** semente ingerida ao comer um fruto (dispersão por zoocoria) */
+  carriedSeed: { species: number; vigor: number } | null;
   /** energia: cai voando/correndo, sobe comendo/descansando */
   energy: number;
   /** alvo atual (px) */
@@ -169,6 +177,30 @@ export interface Animal {
   quirk: number;
   /** altura de voo da ave (px) */
   hover: number;
+}
+
+/** cria um agente com todos os campos (usado no spawn e em testes/tools) */
+export function makeAnimal(partial: Pick<Animal, 'id' | 'kind' | 'chunk' | 'x' | 'y'> & Partial<Animal>): Animal {
+  const quirk = partial.quirk ?? 0.5;
+  return {
+    vx: 0,
+    vy: 0,
+    state: 'idle',
+    timer: 0,
+    facing: 1,
+    animPhase: quirk * 4,
+    hunger: 0.3 + quirk * 0.3,
+    thirst: 0.2 + quirk * 0.25,
+    health: 1,
+    poopTimer: 2 + quirk * 3,
+    carriedSeed: null,
+    energy: 0.6 + quirk * 0.4,
+    tx: partial.x,
+    ty: partial.y,
+    hover: 0,
+    quirk,
+    ...partial,
+  };
 }
 
 /** traços por espécie: habitat, velocidade, raio de ação e rotina */
@@ -192,15 +224,15 @@ interface FaunaTraits {
 
 export const FAUNA_TRAITS: Record<FaunaKind, FaunaTraits> = {
   rabbit: {
-    kind: 'rabbit', speed: 26, step: 9, searchCells: 2, diurnal: true,
+    kind: 'rabbit', speed: 62, step: 9, searchCells: 2, diurnal: true,
     needsWater: false, avoidsDeepWater: true, flying: false,
   },
   frog: {
-    kind: 'frog', speed: 14, step: 6, searchCells: 2, diurnal: false,
+    kind: 'frog', speed: 40, step: 6, searchCells: 2, diurnal: false,
     needsWater: true, avoidsDeepWater: false, flying: false,
   },
   bird: {
-    kind: 'bird', speed: 34, step: 12, searchCells: 3, diurnal: true,
+    kind: 'bird', speed: 95, step: 12, searchCells: 3, diurnal: true,
     needsWater: false, avoidsDeepWater: true, flying: true,
   },
 };
@@ -317,32 +349,25 @@ export function seedFauna(
       // hash para que sapo e ave nunca compartilhem id
       const kindIndex = out.filter((a) => a.kind === kind).length;
       const kindCode = kind === 'rabbit' ? 1 : kind === 'frog' ? 2 : 3;
-      out.push({
-        id: Math.floor(
-          hash2(
-            cfg.seed ^ (0x77c1 + kindCode * 977),
-            chunk.cx * 101 + k + kindCode * 10007,
-            chunk.cy * 61 + kindIndex + kindCode * 10009,
-            704 + kindCode,
-          ) * 0x7fffffff,
-        ),
-        kind,
-        chunk,
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        state: night && !FAUNA_TRAITS[kind].diurnal ? 'wander' : 'idle',
-        timer: 0,
-        facing: quirk > 0.5 ? 1 : -1,
-        animPhase: quirk * 4,
-        hunger: 0.3 + quirk * 0.3,
-        energy: 0.6 + quirk * 0.4,
-        tx: x,
-        ty: y,
-        quirk,
-        hover: 0,
-      });
+      out.push(
+        makeAnimal({
+          id: Math.floor(
+            hash2(
+              cfg.seed ^ (0x77c1 + kindCode * 977),
+              chunk.cx * 101 + k + kindCode * 10007,
+              chunk.cy * 61 + kindIndex + kindCode * 10009,
+              704 + kindCode,
+            ) * 0x7fffffff,
+          ),
+          kind,
+          chunk,
+          x,
+          y,
+          state: night && !FAUNA_TRAITS[kind].diurnal ? 'wander' : 'idle',
+          facing: quirk > 0.5 ? 1 : -1,
+          quirk,
+        }),
+      );
     }
   };
 
@@ -368,6 +393,14 @@ export interface FaunaStepOptions {
   playerY?: number;
   /** chunks vizinhos para travessia de fronteira */
   neighbor?: (cellX: number, cellY: number) => Chunk | null;
+  /**
+   * Consumo REAL de recursos do mundo: a fauna não come "comida invisível".
+   * O mundo remove o inseto do pool / o fruto do chão e devolve o que comeu.
+   */
+  consumeInsect?: (chunk: Chunk, x: number, y: number, radius: number) => boolean;
+  consumeFruit?: (chunk: Chunk, x: number, y: number, radius: number) => { species: number } | null;
+  /** registra uma morte (o mundo remove o agente e devolve matéria orgânica) */
+  onDeath?: (animal: Animal) => void;
 }
 
 /** mapeia estado → animação disponível no spritesheet da espécie */
@@ -433,7 +466,7 @@ function nearestWater(chunk: Chunk, cfg: WorldConfig, x: number, y: number): { x
   const ly0 = clamp(Math.floor(y / cellPx) - chunk.cy * chunk.n, 0, chunk.n - 1);
   let best: { x: number; y: number } | null = null;
   let bestD = Infinity;
-  for (let r = 1; r <= 3 && !best; r++) {
+  for (let r = 1; r <= 4 && !best; r++) {
     for (let oy = -r; oy <= r; oy++) {
       for (let ox = -r; ox <= r; ox++) {
         const nx = lx0 + ox;
@@ -448,6 +481,22 @@ function nearestWater(chunk: Chunk, cfg: WorldConfig, x: number, y: number): { x
           best = { x: wx, y: wy };
         }
       }
+    }
+  }
+  return best;
+}
+
+/** inseto mais próximo (posições do pool do mundo via `chunk.localInsects`) */
+function nearestInsect(chunk: Chunk, x: number, y: number, reach: number): { x: number; y: number } | null {
+  const list = chunk.localInsects;
+  if (!list || list.length === 0) return null;
+  let best: { x: number; y: number } | null = null;
+  let bestD = reach * reach;
+  for (const ins of list) {
+    const d = (ins.x - x) ** 2 + (ins.y - y) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = { x: ins.x, y: ins.y };
     }
   }
   return best;
@@ -472,14 +521,40 @@ function nearestFood(chunk: Chunk, x: number, y: number, reach: number): { x: nu
  * `hours` é o intervalo de jogo coberto (a chamada usa passos curtos).
  */
 export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, opts: FaunaStepOptions): void {
-  const h = Math.max(0.001, hours);
+  const h = Math.max(0.0001, hours);
+  // 1 h de jogo = 60 s reais: velocidades em px/s viram deslocamento suave
+  // quando o mundo chama este passo por quadro (gameHours do frame).
+  // limita o passo para não "teleportar" depois de uma pausa/aba oculta
+  const dtSec = clamp(h * 60, 0, 0.5);
   const cellPx = cellPxOf(cfg);
   for (const animal of animals) {
     const traits = FAUNA_TRAITS[animal.kind];
     const chunk = animal.chunk;
     animal.timer += h;
-    animal.hunger = clamp(animal.hunger + h * 0.05, 0, 1);
+    // --- necessidades: fome e sede sobem, energia cai ---------------------
+    animal.hunger = clamp(animal.hunger + h * 0.055, 0, 1);
+    // aves obtêm água dos frutos/insetos: sentem menos sede que mamíferos/anfíbios
+    const thirstRate = animal.kind === 'bird' ? 0.035 : 0.055;
+    animal.thirst = clamp(animal.thirst + h * thirstRate, 0, 1);
     animal.energy = clamp(animal.energy - h * 0.02, 0, 1);
+    // fome/sede extremas corroem a saúde; alimentar-se recupera
+    const strain = clamp(animal.hunger - 0.85, 0, 1) + clamp(animal.thirst - 0.85, 0, 1);
+    if (strain > 0) animal.health = clamp(animal.health - h * strain * 0.05, 0, 1);
+    else animal.health = clamp(animal.health + h * 0.01, 0, 1);
+    if (animal.health <= 0.02) {
+      // morte: devolve matéria orgânica ao solo (nunca "desaparece")
+      const cellPx = cellPxOf(cfg);
+      const i = animal.chunk.cellIdx(
+        clamp(Math.floor(animal.x / cellPx) - animal.chunk.cx * animal.chunk.n, 0, animal.chunk.n - 1),
+        clamp(Math.floor(animal.y / cellPx) - animal.chunk.cy * animal.chunk.n, 0, animal.chunk.n - 1),
+      );
+      animal.chunk.litter[i] = Math.min(16, animal.chunk.litter[i] + 1.2);
+      animal.chunk.coarse[i] = Math.min(6, animal.chunk.coarse[i] + 0.6);
+      animal.chunk.nAvail[i] += 0.06;
+      animal.chunk.soilDirty = true;
+      opts.onDeath?.(animal);
+      continue;
+    }
 
     // --- noite: dorme (sapo é o contrário) ---------------------------------
     const night = opts.hour < 6 || opts.hour > 19;
@@ -507,6 +582,37 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
       }
     }
 
+    // --- beber: sede alta e água por perto --------------------------------
+    if (animal.thirst > 0.5 && animal.state !== 'sleep') {
+      const spotHere = spotAt(chunk, cfg, animal.x, animal.y, opts.worldDay);
+      if (spotHere.water > 0.02) {
+        animal.state = 'swim';
+        animal.timer = 0;
+        animal.thirst = clamp(animal.thirst - h * 1.6, 0, 1);
+        animal.energy = clamp(animal.energy + h * 0.1, 0, 1);
+      } else if (animal.thirst > 0.75) {
+        // a ave também voa até a água quando a sede aperta
+        const w = nearestWater(chunk, cfg, animal.x, animal.y);
+        if (w) {
+          animal.state = 'seek_water';
+          animal.tx = w.x;
+          animal.ty = w.y;
+        }
+      }
+    }
+
+    // --- comer: consome o recurso REAL (inseto, fruto, forragem) ----------
+    if (animal.hunger > 0.55 && animal.state !== 'sleep' && animal.state !== 'flee') {
+      feedAnimal(animal, cfg, opts, h);
+    }
+
+    // --- fezes: devolvem matéria orgânica (+ semente dispersa) ------------
+    if (animal.poopTimer > 0) animal.poopTimer -= h;
+    else if (animal.hunger < 0.6) {
+      poop(animal, cfg, opts);
+      animal.poopTimer = 2.5 + animal.quirk * 3;
+    }
+
     // --- escolha de alvo ---------------------------------------------------
     if (animal.state === 'idle' && animal.timer > 1.2 + animal.quirk * 2) {
       chooseTarget(animal, cfg, opts);
@@ -519,7 +625,7 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
       }
     } else if (animal.state === 'eat' || animal.state === 'swim') {
       animal.energy = clamp(animal.energy + h * 0.35, 0, 1);
-      animal.hunger = clamp(animal.hunger - h * 0.6, 0, 1);
+      if (animal.state === 'eat') feedAnimal(animal, cfg, opts, h);
       if (animal.timer > 2.5) {
         animal.state = 'idle';
         animal.timer = 0;
@@ -540,12 +646,15 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
         const vx = (dx / dist) * speed;
         const vy = (dy / dist) * speed * 0.6; // perspectiva: desloca menos em Y
         // colisão leve: não entra em água funda (coelho/ave) nem em terra seca (sapo)
-        const nextX = animal.x + vx * h;
-        const nextY = animal.y + vy * h;
+        // deslocamento por passo limitado (sem saltos entre células)
+        const dxs = clamp(vx * dtSec, -30, 30);
+        const dys = clamp(vy * dtSec, -30, 30);
+        const nextX = animal.x + dxs;
+        const nextY = animal.y + dys;
         const spot = spotAt(chunk, cfg, nextX, nextY, opts.worldDay);
-        const blocked =
-          (traits.avoidsDeepWater && spot.water > 0.35) ||
-          (animal.kind === 'frog' && !spot.nearWater && animal.state !== 'seek_water' && spot.water < 0.02);
+        // colisão leve: quem não nada evita água funda; o sapo anda em terra
+        // (mas prefere a margem — isso é escolha de alvo, não bloqueio)
+        const blocked = traits.avoidsDeepWater && spot.water > 0.35;
         if (!blocked) {
           animal.x = nextX;
           animal.y = nextY;
@@ -581,8 +690,8 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
         const d = Math.hypot(dx, dy);
         const speed = traits.speed * 1.6;
         if (d > 4) {
-          animal.x += (dx / d) * speed * h;
-          animal.y += (dy / d) * speed * h;
+          animal.x += (dx / d) * speed * dtSec;
+          animal.y += (dy / d) * speed * dtSec;
           animal.facing = dx >= 0 ? 1 : -1;
           animal.animPhase += h * 14;
           animal.hover = 10 + Math.sin(animal.animPhase * 0.6) * 2;
@@ -610,6 +719,101 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
     animal.x = clamp(animal.x, minX, maxX);
     animal.y = clamp(animal.y, minY, maxY);
   }
+}
+
+/**
+ * Dieta por espécie, consumindo recursos que EXISTEM no mundo:
+ *  - coelho: camada herbácea (`chunk.forage`) — grama/brotos;
+ *  - sapo: insetos do pool do chunk;
+ *  - ave: frutos no chão (dispersa a semente) ou insetos.
+ * Se não houver recurso por perto, procura um alvo (seek_food).
+ */
+function feedAnimal(animal: Animal, cfg: WorldConfig, opts: FaunaStepOptions, h: number): void {
+  const chunk = animal.chunk;
+  const cellPx = cellPxOf(cfg);
+  const lx = clamp(Math.floor(animal.x / cellPx) - chunk.cx * chunk.n, 0, chunk.n - 1);
+  const ly = clamp(Math.floor(animal.y / cellPx) - chunk.cy * chunk.n, 0, chunk.n - 1);
+  const i = chunk.cellIdx(lx, ly);
+  const eat = (satisfaction: number) => {
+    animal.hunger = clamp(animal.hunger - h * satisfaction, 0, 1);
+    animal.energy = clamp(animal.energy + h * satisfaction * 0.5, 0, 1);
+    animal.state = 'eat';
+    animal.timer = Math.min(animal.timer, 2);
+  };
+  const searchR = 22;
+
+  if (animal.kind === 'rabbit') {
+    if (chunk.forage[i] > 0.12) {
+      chunk.forage[i] = Math.max(0, chunk.forage[i] - h * 0.05);
+      eat(0.9);
+      return;
+    }
+  } else if (animal.kind === 'frog') {
+    if (opts.consumeInsect?.(chunk, animal.x, animal.y, searchR)) {
+      eat(1.1);
+      return;
+    }
+  } else {
+    // ave: prefere fruto (dispersa semente); senão inseto
+    if (animal.hunger > 0.75) {
+      const fruit = opts.consumeFruit?.(chunk, animal.x, animal.y, searchR * 1.6);
+      if (fruit) {
+        // semente ingerida: germina melhor depois da passagem pelo animal
+        animal.carriedSeed = { species: fruit.species, vigor: 0.6 + animal.quirk * 0.4 };
+        eat(1.2);
+        // frutos também hidratam (a ave raramente precisa descer até a água)
+        animal.thirst = clamp(animal.thirst - 0.25, 0, 1);
+        return;
+      }
+    }
+    if (opts.consumeInsect?.(chunk, animal.x, animal.y, searchR)) {
+      eat(0.9);
+      return;
+    }
+  }
+
+  // sem recurso ao alcance: procurar comida (inseto próximo ou fruto no chão)
+  if (animal.state !== 'seek_food') {
+    const insectTarget =
+      animal.kind === 'frog' || animal.kind === 'bird' ? nearestInsect(chunk, animal.x, animal.y, 4 * cellPx) : null;
+    const food = insectTarget ?? nearestFood(chunk, animal.x, animal.y, 3 * cellPx);
+    if (food) {
+      animal.state = 'seek_food';
+      animal.tx = food.x;
+      animal.ty = food.y;
+      animal.timer = 0;
+    }
+  }
+}
+
+/** fezes: matéria orgânica + nutrientes (e semente dispersa, se houver) */
+function poop(animal: Animal, cfg: WorldConfig, opts: FaunaStepOptions): void {
+  const chunk = animal.chunk;
+  const cellPx = cellPxOf(cfg);
+  const lx = clamp(Math.floor(animal.x / cellPx) - chunk.cx * chunk.n, 0, chunk.n - 1);
+  const ly = clamp(Math.floor(animal.y / cellPx) - chunk.cy * chunk.n, 0, chunk.n - 1);
+  const i = chunk.cellIdx(lx, ly);
+  // material fresco (decomposição rápida) + uma fração de nutrientes prontos
+  chunk.litter[i] = Math.min(16, chunk.litter[i] + 0.35);
+  chunk.nAvail[i] += 0.02;
+  chunk.pAvail[i] += 0.006;
+  chunk.kAvail[i] += 0.012;
+  chunk.soilDirty = true;
+  chunk.dirty = true;
+
+  if (animal.carriedSeed) {
+    // zoocoria: a semente cai longe da planta-mãe e com vigor extra
+    chunk.seedBed.push({
+      x: animal.x,
+      y: animal.y,
+      species: animal.carriedSeed.species,
+      ageHours: 0,
+      seedKey: Math.floor(hash2(cfg.seed ^ 0x5eed, animal.id % 100000, chunk.groundFruits.length + 17, 771) * 0x7fffffff),
+      vigor: animal.carriedSeed.vigor,
+    });
+    animal.carriedSeed = null;
+  }
+  void opts;
 }
 
 /** quadro de animação (0..frames-1) para o tempo corrente */

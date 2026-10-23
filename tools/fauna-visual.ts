@@ -13,7 +13,7 @@ import { SoftwareRenderer, type SpriteSource } from './software';
 import { allAssetFiles } from '../src/render/manifest';
 import { composeScene } from '../src/render/scene';
 import { World } from '../src/world/world';
-import { seedFauna, type Animal } from '../src/world/fauna';
+import { seedFauna, makeAnimal, type Animal } from '../src/world/fauna';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const arg = (n: string, d: string) => {
@@ -64,10 +64,7 @@ function main(): void {
   const make = (kind: Animal['kind'], dx: number, state: Animal['state'], extra: Partial<Animal> = {}): Animal => {
     const src = pick(kind);
     return {
-      ...(src ?? {
-        id: kind.length * 7, kind, chunk, x: 0, y: 0, vx: 0, vy: 0, state: 'idle', timer: 0,
-        facing: 1 as const, animPhase: 0, hunger: 0.4, energy: 0.8, tx: 0, ty: 0, quirk: 0.6, hover: 0,
-      }),
+      ...(src ?? makeAnimal({ id: kind.length * 7, kind, chunk, x: 0, y: 0, quirk: 0.6, energy: 0.8 })),
       id: kind.length * 100 + Math.round(dx),
       x: baseX + dx,
       y: baseY + (extra.y ?? 0),

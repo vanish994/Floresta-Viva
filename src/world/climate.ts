@@ -18,6 +18,62 @@ export type Season = (typeof SEASONS)[number];
 
 const DEG = Math.PI / 180;
 
+/**
+ * Estado atmosférico agregado (não é meteorologia pesada): dois reservatórios
+ * — umidade do ar e água condensada nas nuvens — alimentados por
+ * evaporação/transpiração e drenados pela precipitação. A chuva passa a ser
+ * CONSEQUÊNCIA desse estado, não um número sorteado.
+ */
+export interface AtmosphereState {
+  /** umidade relativa do ar 0..1 */
+  humidity: number;
+  /** água condensada disponível nas nuvens 0..1 (reservatório) */
+  cloudWater: number;
+  /** cobertura de nuvens 0..1 (visual/debug) */
+  cloudCover: number;
+  /** convecção/instabilidade 0..1 (calor + sol + vento) */
+  convection: number;
+  /** vento 0..1 */
+  wind: number;
+  /** intensidade de precipitação 0..1 no instante */
+  precipitation: number;
+}
+
+export interface AtmosphereForcing {
+  /** temperatura do ar (°C) */
+  temperature: number;
+  /** fluxo de evaporação do mundo carregado (0..1 normalizado) */
+  evaporation: number;
+  /** transpiração da vegetação carregada (0..1) */
+  transpiration: number;
+  /** biomassa relativa da floresta carregada (0..1) */
+  forest: number;
+  /** fração de superfície com água (0..1) */
+  waterSurface: number;
+  /** horas do dia 0..23 (convecção) */
+  hour: number;
+  /** dia de jogo (sazonalidade/sinótica) */
+  dayFloat: number;
+}
+
+/** limiares e taxas do ciclo (por hora de jogo) */
+export const ATMOS = {
+  /** umidade acima disto condensa quando há convecção */
+  condensationThreshold: 0.56,
+  /** água de nuvem a partir da qual começa a chover */
+  rainThreshold: 0.30,
+  /** escala do ganho de umidade por evapotranspiração */
+  evapoGain: 0.22,
+  /** relaxamento da umidade em direção ao equilíbrio sazonal */
+  humidityRelax: 0.16,
+  /** taxa de condensação (umidade → nuvem) */
+  condensationRate: 0.26,
+  /** consumo de nuvem pela chuva */
+  rainDrain: 0.30,
+  /** secagem do ar pela chuva */
+  rainDrying: 0.06,
+} as const;
+
 export interface SkyState {
   /** elevação solar (seno) */
   sinElevation: number;
@@ -36,10 +92,130 @@ export class Climate {
   /** ms reais por minuto de jogo */
   readonly msPerGameMinute: number;
 
+  /** estado atmosférico corrente (persistido no save do mundo) */
+  readonly atmosphere: AtmosphereState = {
+    humidity: 0.55,
+    cloudWater: 0.08,
+    cloudCover: 0.12,
+    convection: 0.3,
+    wind: 0.35,
+    precipitation: 0,
+  };
+
   constructor(cfg: WorldConfig) {
     this.cfg = cfg;
     this.noise = new ValueNoise(cfg.seed ^ 0x51ab);
     this.msPerGameMinute = (cfg.realMinutesPerDay * 60 * 1000) / 1440;
+  }
+
+  /** vento determinístico 0..1 (varia com o dia/noite e a estação) */
+  windAt(dayFloat: number): number {
+    const n = this.noise.fbm2(dayFloat * 0.7, 3.3, 3, 0.5, 2, 11) * 0.5 + 0.5;
+    const diurnal = 0.25 + 0.35 * Math.abs(Math.sin(((dayFloat % 1) * 24 * Math.PI) / 24));
+    return clamp(n * 0.7 + diurnal * 0.5, 0, 1);
+  }
+
+  /**
+   * Avança o ciclo atmosférico por `hours` horas de jogo.
+   *
+   * Fonte → umidade (evaporação + transpiração) → condensação se há convecção
+   * → nuvem → precipitação quando a nuvem satura. A chuva consome nuvem e seca
+   * o ar, fechando o ciclo; a vegetação e a água superficial puxam a umidade de
+   * equilíbrio para cima (floresta → mais umidade, nunca garantia de chuva).
+   */
+  stepAtmosphere(hours: number, f: AtmosphereForcing): AtmosphereState {
+    const a = this.atmosphere;
+    const h = Math.max(0, hours);
+    if (h === 0) return a;
+    const seasonWet = this.seasonWetness(f.dayFloat);
+    const sky = this.sky(f.dayFloat, f.hour);
+    const tempF = clamp((f.temperature - 4) / 30, 0, 1);
+    const synoptic = this.rainIntensity(f.dayFloat); // potencial de grande escala
+    a.wind = this.windAt(f.dayFloat);
+
+    // --- equilíbrio da umidade: estação + floresta + água − calor -------------
+    // equilíbrio da umidade: clima de grande escala (sinótico) + estação,
+    // com floresta/água puxando para cima e calor puxando para baixo
+    const equilibrium = clamp(
+      0.34 + 0.26 * seasonWet + 0.10 * clamp(f.forest, 0, 1) + 0.08 * clamp(f.waterSurface, 0, 1)
+        - 0.10 * tempF + 0.30 * synoptic,
+      0.05,
+      0.98,
+    );
+    const evapo = clamp(f.evaporation, 0, 1) * 0.6 + clamp(f.transpiration, 0, 1) * 0.8;
+    let humidity = a.humidity + h * ((equilibrium - a.humidity) * ATMOS.humidityRelax + evapo * ATMOS.evapoGain);
+
+    // --- convecção: calor + sol + vento (a noite estabiliza) -----------------
+    a.convection = clamp(
+      (0.15 + 0.45 * tempF + 0.35 * sky.light + 0.15 * a.wind) * clamp(seasonWet, 0.25, 1.2),
+      0,
+      1,
+    );
+
+    // --- condensação: umidade acima do limiar com convecção ------------------
+    const excess = Math.max(0, humidity - ATMOS.condensationThreshold);
+    const condensation = excess * 4.0 * a.convection;
+    let cloudWater = a.cloudWater + h * (condensation * ATMOS.condensationRate
+      // nuvem também se dissipa devagar quando não chove
+      - a.cloudWater * 0.015);
+    humidity -= h * condensation * 0.02;
+
+    // --- precipitação: precisa de nuvem E instabilidade -----------------------
+    // saturação da nuvem define a intensidade; convecção forte pode virar
+    // tempestade. Chuva só existe com nuvem carregada (nunca "sorteada").
+    const saturation = smoothstep(ATMOS.rainThreshold * 0.55, ATMOS.rainThreshold * 2.3, cloudWater);
+    a.precipitation = clamp(
+      saturation * (0.45 + 0.75 * a.convection) * clamp(seasonWet, 0.25, 1.15),
+      0,
+      1,
+    );
+    // chuva consome a nuvem e seca o ar (retroalimentação negativa)
+    cloudWater -= h * a.precipitation * ATMOS.rainDrain;
+    humidity -= h * a.precipitation * ATMOS.rainDrying;
+
+    a.humidity = clamp(humidity, 0.02, 1);
+    a.cloudWater = clamp(cloudWater, 0, 1);
+    a.cloudCover = clamp(smoothstep(0.05, 0.45, a.cloudWater) * (0.5 + 0.5 * a.convection), 0, 1);
+    return a;
+  }
+
+  /** chuva efetiva AGORA (causal); usada pelo mundo, render e áudio */
+  precipitationNow(): number {
+    if (this.rainOverride) return 1;
+    return clamp(this.atmosphere.precipitation, 0, 1);
+  }
+
+  /** cobertura de nuvens agora (sombreamento/render) */
+  cloudCoverNow(): number {
+    return clamp(this.atmosphere.cloudCover, 0, 1);
+  }
+
+  /** classifica a chuva atual (HUD/debug e efeitos por intensidade) */
+  rainKind(): 'seco' | 'garoa' | 'leve' | 'normal' | 'forte' | 'tempestade' {
+    const p = this.precipitationNow();
+    if (p < 0.04) return 'seco';
+    if (p < 0.18) return 'garoa';
+    if (p < 0.38) return 'leve';
+    if (p < 0.62) return 'normal';
+    if (p < 0.85) return 'forte';
+    return 'tempestade';
+  }
+
+  /** estado atmosférico serializável (save do mundo) */
+  exportAtmosphere(): AtmosphereState {
+    return { ...this.atmosphere };
+  }
+
+  importAtmosphere(state: Partial<AtmosphereState> | undefined): void {
+    if (!state) return;
+    Object.assign(this.atmosphere, {
+      humidity: clamp(state.humidity ?? this.atmosphere.humidity, 0, 1),
+      cloudWater: clamp(state.cloudWater ?? this.atmosphere.cloudWater, 0, 1),
+      cloudCover: clamp(state.cloudCover ?? this.atmosphere.cloudCover, 0, 1),
+      convection: clamp(state.convection ?? this.atmosphere.convection, 0, 1),
+      wind: clamp(state.wind ?? this.atmosphere.wind, 0, 1),
+      precipitation: clamp(state.precipitation ?? 0, 0, 1),
+    });
   }
 
   /** Ativa/desativa chuva manual; usado temporariamente pelo botão de teste. */

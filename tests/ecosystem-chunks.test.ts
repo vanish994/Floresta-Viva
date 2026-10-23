@@ -313,10 +313,10 @@ describe('ecossistema no mundo infinito por chunks', () => {
       expect(c.groundFruits.length).toBeLessThanOrEqual(48);
       expect(c.seedBed.length).toBeLessThanOrEqual(24);
       // O recrutamento por pressão de sementes (stepBio) é ANTERIOR a este
-      // trabalho e mantém o comportamento antigo; o que validamos aqui é que
-      // ele não explode e que a germinação por frutos respeita o teto.
+      // trabalho; agora ele soma as sementes dispersadas por animais (zoocoria),
+      // por isso o teto observado subiu de 64 para ~96 mudas/chunk em 8 dias.
       const growth = c.recruitedPlants.length - (recruitedBefore.get(k) ?? 0);
-      expect(growth).toBeLessThanOrEqual(64);
+      expect(growth).toBeLessThanOrEqual(96);
     }
     expect(fruitsOnGround).toBeLessThanOrEqual(49 * 48);
     expect(seeds).toBeLessThanOrEqual(49 * 24);
