@@ -31,6 +31,7 @@ import type { PlantRecord } from './flora';
 import {
   seedFauna,
   stepFauna,
+  applyPredationDamage,
   FAUNA_CAP,
   type Animal,
 } from './fauna';
@@ -538,6 +539,52 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
           return { species: eaten.species };
         },
         onDeath: (dead) => deaths.push(dead.id),
+        // --- percepção de criaturas (predador/presa) ----------------------
+        nearbyAnimals: (self, radius) => {
+          const r2 = radius * radius;
+          const out: Animal[] = [];
+          for (const other of animals) {
+            if (other === self) continue;
+            const dx = other.x - self.x;
+            const dy = other.y - self.y;
+            if (dx * dx + dy * dy <= r2) out.push(other);
+          }
+          // vizinhos imediatos (fronteira do chunk) também são percebidos
+          for (let oy = -1; oy <= 1; oy++) {
+            for (let ox = -1; ox <= 1; ox++) {
+              if (ox === 0 && oy === 0) continue;
+              const other = this.faunaByChunk.get(chunkKeyStr(chunk.cx + ox, chunk.cy + oy));
+              if (!other) continue;
+              for (const a of other) {
+                const dx = a.x - self.x;
+                const dy = a.y - self.y;
+                if (dx * dx + dy * dy <= r2) out.push(a);
+              }
+            }
+          }
+          return out;
+        },
+        // --- predação: dano real na saúde da presa ------------------------
+        damageAnimal: (prey, amount) => {
+          const wasAlive = prey.state !== 'dead';
+          applyPredationDamage(prey, amount, undefined);
+          if (prey.health <= 0.02 && wasAlive) {
+            prey.state = 'dead';
+            prey.timer = 0;
+            // carcaça devolve matéria orgânica ao solo (o ecossistema continua)
+            const cellPx = cfg.simCellTiles * cfg.tileSize;
+            const pc = prey.chunk;
+            const i = pc.cellIdx(
+              clamp(Math.floor(prey.x / cellPx) - pc.cx * pc.n, 0, pc.n - 1),
+              clamp(Math.floor(prey.y / cellPx) - pc.cy * pc.n, 0, pc.n - 1),
+            );
+            pc.litter[i] = Math.min(16, pc.litter[i] + 0.9);
+            pc.coarse[i] = Math.min(6, pc.coarse[i] + 0.5);
+            pc.nAvail[i] += 0.05;
+            pc.soilDirty = true;
+            deaths.push(prey.id);
+          }
+        },
       });
       if (deaths.length > 0) {
         this.faunaByChunk.set(key, animals.filter((a) => !deaths.includes(a.id)));
@@ -600,15 +647,21 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
     day: number,
   ): void {
     const cfg = this.cfg;
-    const counts = { rabbit: 0, frog: 0, bird: 0 } as Record<string, number>;
+    const counts = { rabbit: 0, frog: 0, bird: 0, snake: 0 } as Record<string, number>;
     for (const a of animals) counts[a.kind] = (counts[a.kind] ?? 0) + 1;
     let forage = 0;
     for (let i = 0; i < chunk.forage.length; i++) forage += chunk.forage[i];
     forage /= Math.max(1, chunk.n * chunk.n);
-    const wants: Array<{ kind: 'rabbit' | 'frog' | 'bird'; food: number; cap: number }> = [
+    const wants: Array<{ kind: 'rabbit' | 'frog' | 'bird' | 'snake'; food: number; cap: number }> = [
       { kind: 'rabbit', food: forage * 2.2, cap: FAUNA_CAP.rabbit },
       { kind: 'frog', food: Math.min(1, insects.length / 4), cap: FAUNA_CAP.frog },
       { kind: 'bird', food: Math.min(1, insects.length / 3), cap: FAUNA_CAP.bird },
+      // predador: só aparece/recompõe se houver presas suficientes no chunk
+      {
+        kind: 'snake',
+        food: Math.min(1, (counts.rabbit + counts.frog + counts.bird) / 3),
+        cap: FAUNA_CAP.snake,
+      },
     ];
     for (const w of wants) {
       if (counts[w.kind] >= w.cap) continue;

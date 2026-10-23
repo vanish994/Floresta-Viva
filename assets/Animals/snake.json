@@ -1,0 +1,25 @@
+{
+  "cell": [
+    41,
+    20
+  ],
+  "maxFrames": 11,
+  "anims": {
+    "idle": 11,
+    "move": 11,
+    "attack": 8,
+    "hide": 9,
+    "death": 7,
+    "hurt": 7,
+    "sleep": 8
+  },
+  "frameMs": {
+    "idle": 240,
+    "move": 120,
+    "attack": 90,
+    "hide": 260,
+    "death": 160,
+    "hurt": 120,
+    "sleep": 380
+  }
+}

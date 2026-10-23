@@ -203,7 +203,13 @@ Detalhes e medições em `docs/EVOLUCAO_CAUSAL.md`.
   como os insetos, não vai para o save. `chunk.localInsects` dá à fauna a comida
   disponível sem acoplar os dois sistemas.
 - Render: `emitAnimal` usa o mesmo pipeline (y-sort, câmera, iluminação) com
-  spritesheets `assets/Animals/{rabbit,frog,bird}.png` (1:1, sem esticar).
+  spritesheets `assets/Animals/{rabbit,frog,bird,snake}.png` (1:1, sem esticar).
+- **IA compartilhada** (`perceive` → `decide` → `remember`): busca local pelos
+  pools do chunk (animais, insetos, frutos, água, forragem), prioridades
+  (fuga > sede > fome > caça > descanso > explorar) e memória curta de
+  presa/ameaça. Um único pipeline para todas as espécies; o `quirk` individual
+  ajusta limiares. A **cobra** é predador (`prey`), ataca só no alcance, desiste
+  depois de `MAX_CHASE_HOURS`; presas fogem e lembram do perigo.
 
 ## Fauna abstrata (`src/world/fauna.ts`, modelo anterior)
 

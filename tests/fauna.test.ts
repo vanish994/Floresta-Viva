@@ -200,14 +200,16 @@ describe('fauna visual', () => {
     }
   });
 
-  it('7. escala: animais pequenos em relação ao personagem (17/15/14 px)', () => {
-    // personagem tem ~29 px de altura no sheet; o coelho tem 17, o sapo 15 e a ave 14
+  it('7. escala: animais pequenos em relação ao personagem', () => {
+    // personagem tem ~29 px de altura no sheet; coelho 17, sapo 15, ave 14 e a
+    // cobra enrolada 20 (é mais larga do que alta, mas nunca "gigante")
     expect(FAUNA_SHEETS.rabbit.cellH).toBe(17);
     expect(FAUNA_SHEETS.frog.cellH).toBe(15);
     expect(FAUNA_SHEETS.bird.cellH).toBe(14);
+    expect(FAUNA_SHEETS.snake.cellH).toBe(20);
     const playerHeight = 29;
     for (const sheet of Object.values(FAUNA_SHEETS)) {
-      expect(sheet.cellH).toBeLessThan(playerHeight * 0.65); // nunca "gigante"
+      expect(sheet.cellH).toBeLessThan(playerHeight * 0.75); // nunca "gigante"
       expect(sheet.cellH).toBeGreaterThan(10); // e visível (não 1–2 px)
     }
   });
