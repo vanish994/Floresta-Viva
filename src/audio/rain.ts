@@ -7,7 +7,7 @@ export class RainAudio {
   private unlocked = false;
   private current = 0;
 
-  constructor(src = new URL('audio/rain-spring.mp3', import.meta.env.BASE_URL).href) {
+  constructor(src = `${import.meta.env.BASE_URL}audio/rain-spring.mp3`) {
     this.audio = new Audio(src);
     this.audio.loop = true;
     this.audio.preload = 'auto';
@@ -45,14 +45,12 @@ export class RainAudio {
 
   update(intensity: number, dt: number): void {
     const rain = Math.max(0, Math.min(1, intensity));
-    // Curva perceptual: a garoa fica discreta, mas chuva forte cresce bastante.
     const target = rain < 0.025 ? 0 : Math.pow(rain, 0.72) * 0.42;
     const smoothing = 1 - Math.exp(-dt * 2.8);
     this.current += (target - this.current) * smoothing;
 
     if (this.gain) {
       this.gain.gain.value = this.current;
-      // Chuva fraca é mais abafada; pancada ganha mais agudos.
       this.filter!.frequency.value = 1100 + this.current / 0.42 * 6500;
     } else {
       this.audio.volume = this.current;
