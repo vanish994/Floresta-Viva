@@ -10,7 +10,15 @@ import { WorldFields } from './fields';
 import { Climate, GameClock } from './climate';
 import { Chunk } from './chunk';
 import { generateChunk, type GenContext } from './gen';
-import { stepWater, stepBio, stepErosion, type Neighborhood, type ErosionSink } from './ecology';
+import { stepWater, stepBio, type Neighborhood } from './ecology';
+import {
+  stepErosion,
+  stepBanks,
+  createSedimentBudget,
+  accumulateSedimentBudget,
+  type SedimentBudget,
+  type SedimentRegion,
+} from './sediment';
 import {
   stepWaterPhysics,
   accumulateBudget,
@@ -31,6 +39,10 @@ export interface WorldStats {
   waterVolume: number;
   /** custo do passo de física da água (ms, média móvel) */
   waterMs: number;
+  /** custo dos passos de erosão/margem (ms, média móvel) */
+  sedimentMs: number;
+  /** células classificadas como areia nos chunks carregados */
+  sandCells: number;
 }
 
 /** estado de água arquivado quando um chunk é descarregado */
@@ -42,7 +54,7 @@ interface WaterSnapshot {
   surfaceInput: Float32Array;
 }
 
-export class World implements Neighborhood, ErosionSink, WaterRegion {
+export class World implements Neighborhood, WaterRegion, SedimentRegion {
   readonly cfg: WorldConfig;
   readonly fields: WorldFields;
   readonly climate: Climate;
@@ -53,7 +65,16 @@ export class World implements Neighborhood, ErosionSink, WaterRegion {
   /** diffs de save aguardando o chunk ser gerado */
   pendingDiffs?: Record<
     string,
-    { removed: number[]; recruits: PlantRecord[]; soil?: number[]; water?: number[]; flow?: number[] }
+    {
+      removed: number[];
+      recruits: PlantRecord[];
+      soil?: number[];
+      water?: number[];
+      flow?: number[];
+      sand?: number[];
+      types?: number[];
+      layer?: number[];
+    }
   >;
   /** chamado após cada chunk gerado (usado para aplicar diffs persistidos) */
   onChunkGenerated?: (chunk: Chunk) => void;
@@ -65,9 +86,13 @@ export class World implements Neighborhood, ErosionSink, WaterRegion {
     plants: 0,
     waterVolume: 0,
     waterMs: 0,
+    sedimentMs: 0,
+    sandCells: 0,
   };
   /** orçamento acumulado de água (m³) desde o início da sessão */
   readonly waterBudget: WaterBudget = createWaterBudget();
+  /** orçamento acumulado de erosão/sedimentos (m somados por célula) */
+  readonly sedimentBudget: SedimentBudget = createSedimentBudget();
   /** água de chunks descarregados — evita que a borda vire uma parede permanente */
   private waterArchive = new Map<string, WaterSnapshot>();
 
@@ -94,7 +119,8 @@ export class World implements Neighborhood, ErosionSink, WaterRegion {
     const k = `${cellX},${cellY}`;
     const prev = this.terrainDeltas.get(k) ?? 0;
     const v = prev + d;
-    if (Math.abs(v) < 1e-6) this.terrainDeltas.delete(k);
+    // mantém o valor enquanto for numericamente relevante (conservação exata)
+    if (Math.abs(v) < 1e-9) this.terrainDeltas.delete(k);
     else this.terrainDeltas.set(k, clampDelta(v));
     return (this.terrainDeltas.get(k) ?? 0) - prev;
   }
@@ -120,6 +146,21 @@ export class World implements Neighborhood, ErosionSink, WaterRegion {
   waterChunks(): Iterable<Chunk> {
     const center = chunkOfPx(this.playerX, this.playerY, this.cfg);
     const r = Math.max(0, this.cfg.waterActiveRadiusChunks);
+    const out: Chunk[] = [];
+    for (const chunk of this.chunks.values()) {
+      if (Math.abs(chunk.cx - center.cx) <= r && Math.abs(chunk.cy - center.cy) <= r) out.push(chunk);
+    }
+    return out;
+  }
+
+  /**
+   * Região ativa da morfologia: um pouco menor que a da água (o solver é mais
+   * caro por célula). Fora dela não há transporte — a carga deposita na borda,
+   * sem perda de massa.
+   */
+  sedimentChunks(): Iterable<Chunk> {
+    const center = chunkOfPx(this.playerX, this.playerY, this.cfg);
+    const r = Math.max(0, this.cfg.erosionActiveRadiusChunks);
     const out: Chunk[] = [];
     for (const chunk of this.chunks.values()) {
       if (Math.abs(chunk.cx - center.cx) <= r && Math.abs(chunk.cy - center.cy) <= r) out.push(chunk);
@@ -211,6 +252,7 @@ export class World implements Neighborhood, ErosionSink, WaterRegion {
       chunk.lastSoilHour = this.clock.totalHours;
       chunk.lastBioHour = this.clock.totalHours;
       chunk.lastErosionHour = this.clock.totalHours;
+      chunk.lastBankHour = this.clock.totalHours;
       this.chunks.set(key, chunk);
       this.stats.chunksGenerated++;
       this.onChunkGenerated?.(chunk);
@@ -241,6 +283,7 @@ export class World implements Neighborhood, ErosionSink, WaterRegion {
         chunk.lastSoilHour = hours;
         chunk.lastBioHour = hours;
         chunk.lastErosionHour = hours;
+        chunk.lastBankHour = hours;
         continue;
       }
 
@@ -259,14 +302,12 @@ export class World implements Neighborhood, ErosionSink, WaterRegion {
         guard++;
       }
 
-      if (hours - chunk.lastErosionHour >= cfg.periodErosionHours) {
-        stepErosion(chunk, cfg, cfg.periodErosionHours, this.clock.dayFloat, this);
-        chunk.lastErosionHour += cfg.periodErosionHours;
-      }
     }
 
     // física da água superficial: passo fixo, independente da taxa de quadros
     this.runWaterPhysics(gameHours);
+    // morfologia fluvial (erosão/deposição) e margens, com a água já atualizada
+    this.runMorphology(gameHours);
 
     this.stats.simMs = this.stats.simMs * 0.9 + (performanceNow() - t0) * 0.1;
     let plants = 0;
@@ -274,8 +315,65 @@ export class World implements Neighborhood, ErosionSink, WaterRegion {
     this.stats.plants = plants;
   }
 
-  /** acumulador de tempo de jogo para a física da água */
+  /** acumuladores de tempo de jogo (frequências independentes) */
   private waterAccumHours = 0;
+  private erosionAccumHours = 0;
+  private bankAccumHours = 0;
+
+  /**
+   * Erosão/deposição e margens. Roda só na região ativa (a mesma da água):
+   * o custo é proporcional ao número de chunks carregados e a ordem de
+   * processamento é fixa (chunks ordenados), então o resultado é determinístico.
+   */
+  private runMorphology(gameHours: number): void {
+    if (!(gameHours > 0)) return;
+    const cfg = this.cfg;
+    const t0 = performanceNow();
+    const dayFloat = this.clock.dayFloat;
+    const rain = this.climate.rainIntensity(dayFloat);
+    const base = {
+      worldDay: dayFloat,
+      worldHours: this.clock.totalHours,
+      rainIntensity: rain,
+    };
+    let ran = false;
+
+    this.erosionAccumHours += gameHours;
+    let steps = 0;
+    while (this.erosionAccumHours >= cfg.periodErosionHours && steps < 4) {
+      const budget = createSedimentBudget();
+      stepErosion(this, cfg.periodErosionHours, { ...base, budget });
+      accumulateSedimentBudget(this.sedimentBudget, budget);
+      this.erosionAccumHours -= cfg.periodErosionHours;
+      steps++;
+      ran = true;
+    }
+    if (steps >= 4) this.erosionAccumHours = 0; // descarta atraso excessivo
+
+    this.bankAccumHours += gameHours;
+    steps = 0;
+    while (this.bankAccumHours >= cfg.periodBankHours && steps < 8) {
+      const budget = createSedimentBudget();
+      stepBanks(this, cfg.periodBankHours, { ...base, budget });
+      accumulateSedimentBudget(this.sedimentBudget, budget);
+      this.bankAccumHours -= cfg.periodBankHours;
+      steps++;
+      ran = true;
+    }
+    if (steps >= 8) this.bankAccumHours = 0;
+
+    if (ran) this.stats.sedimentMs = this.stats.sedimentMs * 0.9 + (performanceNow() - t0) * 0.1;
+
+    const erosionUntil = this.clock.totalHours - this.erosionAccumHours;
+    const bankUntil = this.clock.totalHours - this.bankAccumHours;
+    let sand = 0;
+    for (const chunk of this.chunks.values()) {
+      if (erosionUntil > chunk.lastErosionHour) chunk.lastErosionHour = erosionUntil;
+      if (bankUntil > chunk.lastBankHour) chunk.lastBankHour = bankUntil;
+      sand += chunk.sandCells();
+    }
+    this.stats.sandCells = sand;
+  }
 
   private runWaterPhysics(gameHours: number): void {
     if (!(gameHours > 0)) return;

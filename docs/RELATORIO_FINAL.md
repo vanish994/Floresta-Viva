@@ -47,13 +47,13 @@ em TypeScript + Canvas2D (Vite), reaproveitando 100% dos sprites do pacote.
 ## Principais arquivos
 
 - `src/core/` — `rng.ts`, `coords.ts`, `config.ts`
-- `src/world/` — `fields.ts`, `hydro.ts`, `water.ts`, `gen.ts`, `chunk.ts`, `world.ts`,
-  `ecology.ts`, `climate.ts`, `flora.ts`, `fauna.ts`, `persistence.ts`
+- `src/world/` — `fields.ts`, `hydro.ts`, `water.ts`, `sediment.ts`, `gen.ts`, `chunk.ts`,
+  `world.ts`, `ecology.ts`, `climate.ts`, `flora.ts`, `fauna.ts`, `persistence.ts`
 - `src/render/` — `ops.ts`, `scene.ts`, `CanvasRenderer.ts`, `manifest.ts` (gerado),
   `sanitize.ts`
 - `src/game/` — `player.ts`, `input.ts`; `src/main.ts`; `index.html`; `src/ui/style.css`
 - `tools/` — `preview.ts`, `software.ts`, `png.ts`, `gen-manifest.mjs`, `data/*`
-- `tests/` — 9 arquivos, 58 testes
+- `tests/` — 10 arquivos, 72 testes
 - `docs/` — este relatório, `ARQUITETURA.md`, `PARAMETROS.md`, `imagens/`
 
 ## Como funciona a geração por seed e chunks
@@ -189,3 +189,40 @@ Limitações: modelo hidrostático de poços (sem ondas/ressaltos), escala calib
 (`waterFlowScale`), arquivo de água de chunks descarregados capado em 192 chunks,
 nascentes como condição de contorno (sem aquífero completo) e erosão limitada a
 ±0,25 m por célula pelo limite persistente existente.
+
+
+---
+
+## Atualização — erosão, sedimentos e margens arenosas
+
+O `stepErosion` anterior escrevia deltas de elevação com sinais mistos (criava e
+destruía terreno), usava a direção D8 estática, descartava a deposição calculada
+e nunca atualizava `chunk.elev`. A areia vinha só da geração e o render pintava
+praias decorativas em qualquer margem de lago.
+
+Agora a morfologia vive em `src/world/sediment.ts`, acoplada ao estado real da
+água (velocidade/profundidade do solver): desagregação com resistência por
+textura, copa, matéria orgânica e raízes; carga suspensa conservada, transportada
+na direção do fluxo e através de fronteiras de chunk; deposição onde a correnteza
+perde força (bancos de areia e praias) ou em água parada (lama de lago). A
+elevação e a declividade são atualizadas no mesmo passo e persistidas em
+`world.terrainDeltas`.
+
+A areia passou a ser um estado físico: fração (`chunk.sand`) + espessura do
+depósito (`chunk.sandLayer`). A célula só é classificada como arenosa acima de
+0,55 de areia **e** 1 cm de depósito, com histerese (volta abaixo de 0,36) e
+cooldown de 48 h; a lavagem seletiva tem teto abaixo do limiar, então não cria
+areia sem sedimento. Vegetação protege o solo e recoloniza margens secas; erosão
+profunda expõe raízes e pode derrubar árvores vulneráveis (resistência por
+profundidade de raiz e tolerância à inundação).
+
+Medições (detalhes em `docs/EROSAO.md`): **72 testes aprovados** (14 novos de
+erosão/sedimentos), cenário reproduzível com fechamento de massa em 4,7e-9 e
+`lost = 0`, canal rebaixado de 14,950 → 14,780 m, remanso com 1,7 cm de depósito
+arenoso e 18 células reclassificadas como areia em 168 h. Custo: 3–4 ms por passo
+de margem (1×/h de jogo) e 11–20 ms por passo de erosão (1×/24 h de jogo).
+
+Limitações: deltas limitados a ±0,25 m por célula (teto pré-existente), transporte
+de uma célula por subpasso com direção cardinal dominante, areia depende de solo
+aluvial/arenoso como fonte, e a queda de árvores por erosão exige erosão local
+profunda acumulada em muitos dias de jogo.

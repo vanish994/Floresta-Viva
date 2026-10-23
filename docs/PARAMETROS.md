@@ -7,7 +7,7 @@ Tudo em `src/core/config.ts` (`DEFAULT_CONFIG`), sobrescrevível por `new World(
 | parâmetro | padrão | efeito |
 | --- | --- | --- |
 | `seed` | 1337 | seed numérica do mundo |
-| `generatorVersion` | 4 | invalida saves de terrenos antigos |
+| `generatorVersion` | 5 | invalida saves de terrenos antigos |
 | `tileSize` | 32 px | tile gráfico (medido nos assets) |
 | `chunkTiles` | 32 | tiles por lado do chunk (1024 px) |
 | `simCellTiles` | 2 | tiles por célula de simulação (grade ambiental 2× mais grossa) |
@@ -38,7 +38,8 @@ Tudo em `src/core/config.ts` (`DEFAULT_CONFIG`), sobrescrevível por `new World(
 | `startDayOfYear` / `startHour` | 8 / 8 | instante inicial |
 | `periodWaterHours` | 0.5 | passo do balanço hídrico do solo |
 | `periodBioHours` | 3 | passo de crescimento/decomposição/nutrientes |
-| `periodErosionHours` | 24 | passo de erosão/geologia |
+| `periodErosionHours` | 24 | passo de erosão/deposição (morfologia) |
+| `periodBankHours` | 1 | passo de margem (contato com água/textura de areia) |
 
 Referências do ciclo: 06:00 nascer do sol, 12:00 meio-dia, 18:00 pôr do sol no equinócio
 (testado); transições de luz por smoothstep do seno de elevação solar.
@@ -71,6 +72,45 @@ Referências do ciclo: 06:00 nascer do sol, 12:00 meio-dia, 18:00 pôr do sol no
 
 Ksat por textura (m/h): arenoso 0,12 · argiloso 0,02 · rochoso 0,006 · florestal 0,05 ·
 aluvial 0,04. Leito de rio/lago infiltra 15–20% do valor da margem.
+
+## Erosão, sedimentos e margens (`src/world/sediment.ts`)
+
+| parâmetro | padrão | efeito |
+| --- | --- | --- |
+| `periodErosionHours` | 24 h | intervalo da morfologia (erosão + transporte + deposição) |
+| `erosionSubstepHours` / `erosionMaxSubsteps` | 8 h / 4 | discretização interna (estabilidade) |
+| `erosionActiveRadiusChunks` | 1 | chunks ativos da morfologia (a água usa 2) |
+| `erosionRate` | 0.09 | coeficiente global de desagregação |
+| `erosionMaxRatePerHour` | 0.006 m/h | teto de rebaixamento por hora |
+| `sedimentCapacity` | 0.05 | capacidade de transporte (∝ v^1,5·√prof) |
+| `sedimentMaxLoad` | 0.004 | carga máxima por célula; excedente assenta |
+| `sedimentDepositionPerHour` | 0.00008 | taxa base de deposição |
+| `sedimentTransportSpeed` | 0.04 m/s | velocidade em que a carga avança uma célula/subpasso |
+| `sandLayerMeters` | 0.04 m | espessura de referência para misturar textura |
+| `sandMinLayerMeters` | 0.01 m | depósito mínimo para classificar areia |
+| `sandThreshold` / `sandRevertThreshold` | 0.55 / 0.36 | histerese de classificação areia↔terra |
+| `sandWinnowCap` | 0.5 | teto da lavagem seletiva (abaixo do limiar: não cria areia) |
+| `shoreHoursForSand` | 3 h | contato com água para iniciar a lavagem |
+| `sandWinnowRate` | 0.12 /h | velocidade da lavagem seletiva |
+| `sandRecoveryRate` | 0.002 /h | recuperação do solo sob vegetação estabelecida |
+| `shoreMemoryHours` | 24 h | memória do contato com água quando a célula seca |
+| `bankMaxSlope` | 1.2 | declive máximo para uma margem acumular areia |
+| `rootExposureMeters` | 0.12 m | erosão que começa a expor raízes |
+
+Textura inicial de areia por solo (`sandBase`): arenoso 0,85 · aluvial 0,35 ·
+florestal 0,15 · argiloso 0,10 · rochoso 0,03.
+
+## Personagem / natação (`src/game/player.ts`)
+
+| constante | valor | efeito |
+| --- | --- | --- |
+| `SWIM_DEPTH_M` | 0.45 m | acima disso o personagem nada (abaixo, vadea ou anda) |
+| `WADE_DEPTH_M` | 0.15 m | acima disso andar fica lento (vadeo) |
+| `swimSpeed` | 78 px/s | velocidade nadando (terra: 150, vadeando: 82,5) |
+| `exhaustedSwimFactor` | 0.35 | fração da velocidade com fôlego zerado (flutuando) |
+| `currentFactor` | 14 | converte m/s da correnteza em px/s de empurrão (escala de jogo) |
+| `staminaDrain` | 0.032 /s | consumo de fôlego nadando (× até 2,4 contra a correnteza) |
+| `staminaRegenLand` / `staminaRegenShallow` | 0.35 / 0.12 /s | recuperação de fôlego |
 
 ## Vegetação
 

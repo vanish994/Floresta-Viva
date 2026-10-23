@@ -22,6 +22,12 @@ interface ChunkDiff {
   water?: number[];
   /** componentes de velocidade quantizadas (-4..4 m/s em 0..255) */
   flow?: number[];
+  /** fração de areia da superfície (0..255) — margens e bancos */
+  sand?: number[];
+  /** classificação do solo (0..4) alterada por erosão/deposição */
+  types?: number[];
+  /** espessura do depósito arenoso em 0..255 → 0..0,5 m (passo ~2 mm) */
+  layer?: number[];
 }
 
 interface SaveData {
@@ -62,6 +68,11 @@ export function saveWorld(world: World, storage: Storage = localStorage): boolea
       if (chunk.waterDirty) {
         diff.water = quantizeWater(chunk);
         diff.flow = quantizeFlow(chunk);
+      }
+      if (chunk.soilDirty) {
+        diff.sand = quantizeSand(chunk);
+        diff.types = Array.from(chunk.soilType);
+        diff.layer = quantizeLayer(chunk);
       }
       data.chunks[key] = diff;
       count++;
@@ -116,6 +127,14 @@ export function applyChunkDiffs(world: World, chunk: Chunk): void {
   if (diffs.soil) dequantizeSoil(chunk, diffs.soil);
   if (diffs.water) dequantizeWater(chunk, diffs.water);
   if (diffs.flow) dequantizeFlow(chunk, diffs.flow);
+  if (diffs.types) {
+    for (let i = 0; i < chunk.soilType.length; i++) {
+      const t = diffs.types[i];
+      if (t !== undefined) chunk.soilType[i] = Math.max(0, Math.min(4, t | 0));
+    }
+  }
+  if (diffs.sand) dequantizeSand(chunk, diffs.sand);
+  if (diffs.layer) dequantizeLayer(chunk, diffs.layer);
   chunk.waterDirty = false;
   chunk.dirty = false;
 }
@@ -156,6 +175,48 @@ function dequantizeFlow(chunk: Chunk, data: number[]): void {
     if (x === undefined || y === undefined) continue;
     chunk.flowX[i] = ((x / 255) * 2 - 1) * WATER_SAVE_FLOW;
     chunk.flowY[i] = ((y / 255) * 2 - 1) * WATER_SAVE_FLOW;
+  }
+}
+
+/** fração de areia (0..1) em um byte */
+function quantizeSand(chunk: Chunk): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < chunk.sand.length; i++) {
+    out.push(Math.max(0, Math.min(255, Math.round(chunk.sand[i] * 255))));
+  }
+  return out;
+}
+
+function dequantizeSand(chunk: Chunk, data: number[]): void {
+  for (let i = 0; i < chunk.sand.length; i++) {
+    const v = data[i];
+    if (v === undefined) continue;
+    chunk.sand[i] = v / 255;
+  }
+}
+
+/**
+ * Espessura do depósito arenoso num byte. A faixa útil é 0..0,5 m (passo ~2 mm:
+ * um depósito de 1 cm — o limiar de classificação — não pode virar 0 no save).
+ * Depósitos maiores que 0,5 m são saturados nesse teto (só ocorrem em casos
+ * extremos de assoreamento e já estão bem acima do limiar).
+ */
+const SAND_LAYER_SAVE_MAX = 0.5;
+
+function quantizeLayer(chunk: Chunk): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < chunk.sandLayer.length; i++) {
+    const v = chunk.sandLayer[i];
+    out.push(Math.max(0, Math.min(255, Math.round((v / SAND_LAYER_SAVE_MAX) * 255))));
+  }
+  return out;
+}
+
+function dequantizeLayer(chunk: Chunk, data: number[]): void {
+  for (let i = 0; i < chunk.sandLayer.length; i++) {
+    const v = data[i];
+    if (v === undefined) continue;
+    chunk.sandLayer[i] = (v / 255) * SAND_LAYER_SAVE_MAX;
   }
 }
 

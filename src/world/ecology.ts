@@ -14,7 +14,6 @@ import { clamp, hash2, smoothstep } from '../core/rng';
 import { Chunk, SOIL_ALLUVIAL, SOIL_FOREST, SOIL_ROCK, SOIL_SAND } from './chunk';
 import { SPECIES, type PlantRecord } from './flora';
 import type { Climate } from './climate';
-import { DX8, DY8 } from './hydro';
 import { animalDispersalBonus } from './fauna';
 
 export interface Neighborhood {
@@ -274,7 +273,16 @@ export function stepBio(
       }
 
       // --- solo florestal se desenvolve sob copa estabelecida ---
-      if (canopy > 0.45 && chunk.soilType[i] !== SOIL_ROCK && chunk.soilType[i] !== SOIL_ALLUVIAL && chunk.humus[i] > 3.2) {
+      // solo florestal se desenvolve sob copa — mas não sobre areia ativa: a
+      // areia só deixa de ser areia pelo processo de margem (sediment.ts), o que
+      // evita alternância areia↔floresta entre os dois passos
+      if (
+        canopy > 0.45 &&
+        chunk.soilType[i] !== SOIL_ROCK &&
+        chunk.soilType[i] !== SOIL_ALLUVIAL &&
+        chunk.soilType[i] !== SOIL_SAND &&
+        chunk.humus[i] > 3.2
+      ) {
         chunk.soilType[i] = SOIL_FOREST;
       }
     }
@@ -291,129 +299,4 @@ function speciesFitLocal(sp: number, moisture: number, soil: number, light: numb
   const lightF = 1 - clamp(Math.abs(light - s.lightNeed) / 0.85, 0, 1);
   const tempF = clamp(1 - Math.abs(temp - s.tempOpt) / 15, 0, 1) * (temp > s.tempMin ? 1 : 0);
   return water * 0.35 + soilF * 0.2 + lightF * 0.25 + tempF * 0.2;
-}
-
-export interface ErosionSink {
-  /** aplica um delta de elevação normalizada e devolve o delta efetivamente aplicado */
-  addDelta(cellX: number, cellY: number, dNorm: number): number;
-  getDelta(cellX: number, cellY: number): number;
-}
-
-/**
- * Passo lento de erosão/deposição acoplado à água REAL.
- *
- * A capacidade de transporte usa a velocidade (`flowX/flowY`) e a profundidade
- * atuais, não a direção D8 estática. O material erodido fica em
- * `chunk.sediment` (suspenso) e é transportado/ depositado; a soma
- * `delta de elevação + variação do sedimento` é conservada. Além disso o
- * `chunk.elev` é atualizado imediatamente, então a deformação aparece no jogo
- * e não apenas depois de recarregar o chunk.
- */
-export function stepErosion(
-  chunk: Chunk,
-  cfg: WorldConfig,
-  hours: number,
-  worldDay: number,
-  sink: ErosionSink,
-): void {
-  const n = chunk.n;
-  const gx0 = chunk.cx * n, gy0 = chunk.cy * n;
-  const range = cfg.elevationRange;
-  const moved = new Float32Array(n * n);
-
-  const applyTerrain = (i: number, lx: number, ly: number, dNorm: number): number => {
-    const applied = sink.addDelta(gx0 + lx, gy0 + ly, dNorm);
-    chunk.elev[i] += applied * range;
-    return applied;
-  };
-
-  // --- 1. desagregação pelo cisalhamento da correnteza ---------------------
-  for (let ly = 0; ly < n; ly++) {
-    for (let lx = 0; lx < n; lx++) {
-      const i = chunk.cellIdx(lx, ly);
-      const depth = chunk.waterDepth[i];
-      if (depth < 0.04) continue;
-      const speed = Math.hypot(chunk.flowX[i], chunk.flowY[i]);
-      if (speed < 0.12) continue;
-      const slope = chunk.slope[i];
-      if (slope < 0.02) continue;
-      const cover = canopyCoverAt(chunk, cfg, lx, ly, worldDay);
-      const soil = chunk.soilType[i];
-      const resist =
-        (0.35 + 0.65 * cover) * (soil === SOIL_ROCK ? 2.4 : soil === SOIL_SAND ? 0.7 : 1);
-      const shear = (speed - 0.1) ** 2 * clamp(depth, 0, 1.5) * clamp(slope, 0.02, 2.5);
-      let capacity = (hours * 0.00004 * shear) / Math.max(0.2, resist);
-      capacity = Math.min(capacity, 0.0015);
-      if (!(capacity > 1e-9)) continue;
-      const applied = applyTerrain(i, lx, ly, -capacity);
-      if (applied < 0) chunk.sediment[i] = Math.min(2, chunk.sediment[i] - applied);
-    }
-  }
-
-  // --- 2. transporte do sedimento suspenso + deposição onde a energia cai --
-  // snapshot: uma mesma carga não pode ser transportada duas vezes no passo
-  const sedimentBefore = chunk.sediment.slice();
-  for (let ly = 0; ly < n; ly++) {
-    for (let lx = 0; lx < n; lx++) {
-      const i = chunk.cellIdx(lx, ly);
-      const sediment = sedimentBefore[i];
-      if (sediment <= 1e-9) continue;
-      const depth = chunk.waterDepth[i];
-      const speed = Math.hypot(chunk.flowX[i], chunk.flowY[i]);
-
-      // deposição em água lenta / lâmina rasa
-      if (speed < 0.35) {
-        const depositFactor = clamp((0.35 - speed) / 0.35, 0, 1) * clamp(hours * 0.04, 0, 0.5);
-        const deposit = sediment * depositFactor;
-        if (deposit > 1e-9) {
-          const applied = applyTerrain(i, lx, ly, deposit);
-          if (applied > 0) chunk.sediment[i] = Math.max(0, chunk.sediment[i] - applied);
-        }
-      }
-
-      // transporte a jusante pela direção da velocidade real (fallback D8)
-      const remaining = Math.max(0, sedimentBefore[i] - (sediment - chunk.sediment[i]));
-      if (remaining <= 1e-9) continue;
-      const capacity = hours * 0.0008 * clamp(speed, 0, 3) * clamp(depth + 0.05, 0, 1.2);
-      const amount = Math.min(remaining, capacity);
-      if (amount <= 1e-9) continue;
-      let dx = 0, dy = 0;
-      const vmag = Math.hypot(chunk.flowX[i], chunk.flowY[i]);
-      if (vmag > 1e-6) {
-        dx = chunk.flowX[i] / vmag;
-        dy = chunk.flowY[i] / vmag;
-      } else if (chunk.flowDir[i] >= 0) {
-        const d = chunk.flowDir[i];
-        const dist = (d & 1) === 1 ? Math.SQRT2 : 1;
-        dx = DX8[d] / dist;
-        dy = DY8[d] / dist;
-      }
-      const nx = Math.round(lx + dx);
-      const ny = Math.round(ly + dy);
-      if (nx === lx && ny === ly) continue;
-      if (nx < 0 || ny < 0 || nx >= n || ny >= n) {
-        // borda do chunk: deposita localmente (sem perder sedimento)
-        const applied = applyTerrain(i, lx, ly, amount * 0.5);
-        if (applied > 0) chunk.sediment[i] = Math.max(0, chunk.sediment[i] - applied);
-        continue;
-      }
-      const j = chunk.cellIdx(nx, ny);
-      moved[i] -= amount;
-      moved[j] += amount;
-    }
-  }
-  for (let i = 0; i < n * n; i++) {
-    if (moved[i] === 0) continue;
-    const next = chunk.sediment[i] + moved[i];
-    if (next > 4) {
-      // excesso de carga é depositado no próprio local (sem perder massa)
-      const lx = i % n, ly = (i / n) | 0;
-      const applied = applyTerrain(i, lx, ly, next - 4);
-      chunk.sediment[i] = next - Math.max(0, applied);
-    } else {
-      chunk.sediment[i] = Math.max(0, next);
-    }
-  }
-
-  chunk.dirty = true;
 }
