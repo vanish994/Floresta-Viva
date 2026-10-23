@@ -15,6 +15,7 @@ import {
   SPRITES, TREE_FILES, TREE_RECTS, GROUND_TILES, GROUND_TILES_FILE, CLIFF_SOUTH, CLIFF_DIAG, type Rect,
   FRUIT_SHEET, SEED_SHEET, INSECT_SHEET, fruitRect, seedRect, insectRect,
   FAUNA_SHEETS, faunaRect, faunaFrameCount, faunaHasAnim, faunaFlip,
+  activeTilesetId, groundRect, PACK_WATER_FILE, PACK_WATER_DEEP_FILE, PACK_WATER_FRAMES,
 } from './manifest';
 import {
   agentView,
@@ -124,33 +125,55 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
       const layerP = clamp(chunk.sandLayer[ci] / (cfg.sandMinLayerMeters * 1.5), 0, 1);
       const sandP = clamp(Math.max(layerP * 0.9, (sand - 0.34) / 0.3), 0, 1);
       const sandJitter = 0.75 + 0.25 * hash2(cfg.seed, tx, ty, 137);
-      let ground: Rect = GROUND_TILES.grass;
-      if (snowy) ground = GROUND_TILES.snow;
-      else if (soil === 0 && moist < 0.4) ground = GROUND_TILES.sand;
-      else if (soil === 2 && moist < 0.3) ground = GROUND_TILES.dirt;
-      ops.push({ k: 'blit', img: GROUND_TILES_FILE, sx: ground[0], sy: ground[1], sw: 32, sh: 32, dx: sx, dy: sy, dw: T, dh: T });
+      // variante do tile (já existia no chunk): com o tileset do pack ela
+      // escolhe entre as 2–4 versões da mesma textura — o mundo para de repetir
+      const vGround = chunk.groundVariant[chunk.tileIdx(tx - cx0(chunk, cfg, tx), ty - cy0(chunk, cfg, ty))] ?? 0;
+      const kind: 'grass' | 'dirt' | 'sand' | 'snow' = snowy
+        ? 'snow'
+        : soil === 0 && moist < 0.4
+          ? 'sand'
+          : soil === 2 && moist < 0.3
+            ? 'dirt'
+            : 'grass';
+      const groundPick = groundRect(kind, vGround);
+      // espelho determinístico: 2 variantes × 2 orientações = 8 leituras por
+      // textura, o que quebra a "grade" de tiles sem custo extra de asset
+      const groundFlip = activeTilesetId() === 'pack' && ((tx + ty + vGround) & 1) === 1;
+      ops.push({
+        k: 'blit', img: groundPick.file,
+        sx: groundPick.rect[0], sy: groundPick.rect[1], sw: 32, sh: 32,
+        dx: sx, dy: sy, dw: T, dh: T,
+        flip: groundFlip,
+      });
       tileCount++;
       if (!snowy && sandP > 0.02) {
         const sandA = clamp(sandP * sandJitter, 0, 1);
-        ops.push({ k: 'blit', img: GROUND_TILES_FILE, sx: GROUND_TILES.sand[0], sy: GROUND_TILES.sand[1], sw: 32, sh: 32, dx: sx, dy: sy, dw: T, dh: T, alpha: sandA });
-        // areia clara: o tile do pacote é o mesmo da terra, então clareamos
-        ops.push({ k: 'fill', x: sx, y: sy, w: T, h: T, r: 226, g: 199, b: 138, a: sandA * 0.42 });
+        const sandPick = groundRect('sand', vGround);
+        ops.push({ k: 'blit', img: sandPick.file, sx: sandPick.rect[0], sy: sandPick.rect[1], sw: 32, sh: 32, dx: sx, dy: sy, dw: T, dh: T, alpha: sandA });
+        // no tileset antigo a areia é o próprio tile de terra, então clareamos;
+        // no pack a areia já é clara e esse véu só lavava a textura
+        if (activeTilesetId() !== 'pack') {
+          ops.push({ k: 'fill', x: sx, y: sy, w: T, h: T, r: 226, g: 199, b: 138, a: sandA * 0.42 });
+        }
         if (sandP > 0.45 && hash2(cfg.seed, Math.floor(tx / 3), Math.floor(ty / 3), 138) > 0.55) {
           ops.push({ k: 'fill', x: sx + 6, y: sy + T - 9, w: T - 12, h: 2, r: 196, g: 168, b: 108, a: sandA * 0.25 });
         }
       }
 
-      // variação sutil por tile (evita repetição óbvia)
-      const v = chunk.groundVariant[chunk.tileIdx(tx - cx0(chunk, cfg, tx), ty - cy0(chunk, cfg, ty))] ?? 0;
-      if (v === 1) ops.push({ k: 'fill', x: sx, y: sy, w: T, h: T, r: 0, g: 0, b: 0, a: 0.05 });
-      else if (v === 2) ops.push({ k: 'fill', x: sx, y: sy, w: T, h: T, r: 255, g: 255, b: 200, a: 0.04 });
+      // variação sutil por tile (evita repetição óbvia) — no tileset do pack a
+      // variação já vem da textura, então o tingimento fica mais discreto
+      const v = vGround;
+      const vBoost = 1;
+      if (v === 1) ops.push({ k: 'fill', x: sx, y: sy, w: T, h: T, r: 0, g: 0, b: 0, a: 0.05 * vBoost });
+      else if (v === 2) ops.push({ k: 'fill', x: sx, y: sy, w: T, h: T, r: 255, g: 255, b: 200, a: 0.04 * vBoost });
 
       // trilha natural (solo batido)
       const ti = chunk.tileIdx(tx - cx0(chunk, cfg, tx), ty - cy0(chunk, cfg, ty));
       const trail = chunk.trail[ti];
       if (trail > 40 && depth < 0.1) {
         const alpha = clamp(trail / 255, 0, 1) * (snowy ? 0.35 : 0.9);
-        ops.push({ k: 'blit', img: GROUND_TILES_FILE, sx: GROUND_TILES.dirt[0], sy: GROUND_TILES.dirt[1], sw: 32, sh: 32, dx: sx, dy: sy, dw: T, dh: T, alpha });
+        const dirtPick = groundRect('dirt', vGround);
+        ops.push({ k: 'blit', img: dirtPick.file, sx: dirtPick.rect[0], sy: dirtPick.rect[1], sw: 32, sh: 32, dx: sx, dy: sy, dw: T, dh: T, alpha });
       }
 
       // hillshade: relevo lido pela luz (encostas claras/escuras)
@@ -196,7 +219,8 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
           const erosion = -world.getDelta(cellX, cellY);
           if (!snowy && erosion > 0.0015) {
             const scarA = clamp((erosion - 0.0015) / 0.02, 0, 0.55);
-            ops.push({ k: 'blit', img: GROUND_TILES_FILE, sx: GROUND_TILES.dirt[0], sy: GROUND_TILES.dirt[1], sw: 32, sh: 32, dx: sx, dy: sy, dw: T, dh: T, alpha: scarA });
+            const scarPick = groundRect('dirt', vGround);
+            ops.push({ k: 'blit', img: scarPick.file, sx: scarPick.rect[0], sy: scarPick.rect[1], sw: 32, sh: 32, dx: sx, dy: sy, dw: T, dh: T, alpha: scarA });
           }
           if (deep) ops.push({ k: 'fill', x: sx, y: sy, w: T, h: T, r: 62, g: 50, b: 34, a: Math.min(0.42, 0.14 + nearDeep * 0.11) });
         }
@@ -250,12 +274,28 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
       // água parada tem superfície estável; correnteza acelera os quadros
       const frameMs = 420 / (0.6 + Math.min(2.5, speed * 12));
       const frameIdx = Math.floor(opts.timeMs / frameMs) % 4;
-      const mid = SPRITES.water_mid.frames[frameIdx];
-      ops.push({ k: 'blit', img: SPRITES.water_mid.file, sx: mid[0], sy: mid[1], sw: mid[2], sh: mid[3], dx: sx, dy: sy, dw: T, dh: T, alpha: alpha * 0.92 * (snowy ? 0.85 : 1) });
+      // superfície e fundo: o tileset do pack usa os quadros extraídos do pack
+      const usePack = activeTilesetId() === 'pack';
+      const mid = usePack
+        ? ([(frameIdx % PACK_WATER_FRAMES) * T, 0, T, T] as Rect)
+        : SPRITES.water_mid.frames[frameIdx];
+      ops.push({
+        k: 'blit',
+        img: usePack ? PACK_WATER_FILE : SPRITES.water_mid.file,
+        sx: mid[0], sy: mid[1], sw: mid[2], sh: mid[3], dx: sx, dy: sy, dw: T, dh: T,
+        alpha: alpha * (usePack ? 0.82 : 0.92) * (snowy ? 0.85 : 1),
+      });
       const deepA = smoothstepLocal(0.35, 1.1, d);
       if (deepA > 0.02) {
-        const deep = SPRITES.water_deep.frames[frameIdx];
-        ops.push({ k: 'blit', img: SPRITES.water_deep.file, sx: deep[0], sy: deep[1], sw: deep[2], sh: deep[3], dx: sx, dy: sy, dw: T, dh: T, alpha: deepA });
+        const deep = usePack
+          ? ([(frameIdx % PACK_WATER_FRAMES) * T, 0, T, T] as Rect)
+          : SPRITES.water_deep.frames[frameIdx];
+        ops.push({
+          k: 'blit',
+          img: usePack ? PACK_WATER_DEEP_FILE : SPRITES.water_deep.file,
+          sx: deep[0], sy: deep[1], sw: deep[2], sh: deep[3], dx: sx, dy: sy, dw: T, dh: T,
+          alpha: deepA * (usePack ? 0.9 : 1),
+        });
       }
       // Profundidade legível: água rasa mantém o brilho; água funda ganha
       // uma camada azul-escura e uma faixa de luz na superfície.

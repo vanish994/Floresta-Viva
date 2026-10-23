@@ -181,6 +181,18 @@ Equilíbrio da umidade = `0,34 + 0,26·sazonal + 0,10·floresta + 0,08·água �
 | efeitos | 1–6 `fill` por animal | poeira da fuga, ondulação da natação, "z" do sono, faísca de dor, brilho do bote, restos da carcaça |
 | contagem de frames | `faunaFrameCount` (manifesto) | fonte única — `scene.ts` não duplica a tabela |
 
+## Tileset de chão e água (`src/render/manifest.ts`)
+
+| item | valor | efeito |
+| --- | --- | --- |
+| `DEFAULT_TILESET` | `'pack'` | folha de chão/água usada por padrão |
+| `setActiveTileset(id)` / `activeTilesetId()` | `harmonious` \| `pack` | alternância em tempo real (tecla **T** no jogo) |
+| `groundRect(kind, variant)` | recorte + arquivo | escolhe a variante pelo `chunk.groundVariant` |
+| variantes | grama 4 · terra 2 · areia 2 · neve 1 | mais leitura sem trocar a física |
+| espelho determinístico | `(tx + ty + variante) & 1` | 8 leituras por textura (quebra a grade) |
+| água | 4 quadros, superfície + fundo | alpha 0,82 (pack) contra 0,92 (antigo) |
+| `matchTone` | ganho limitado 0,72–1,35 | casa a paleta do pack com a do jogo |
+
 ## Personagem / natação (`src/game/player.ts`)
 
 | constante | valor | efeito |

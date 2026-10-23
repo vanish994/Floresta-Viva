@@ -14,13 +14,15 @@ decomposição, erosão, clima, estações) evoluem em frequências separadas do
 ```bash
 npm install
 npm run dev          # abre o jogo (Vite em 0.0.0.0:5173)
-npm test             # 196 testes (determinismo, continuidade, hidrologia, água, erosão, natação, ecossistema, tempo, chunks, persistência)
+npm test             # 203 testes (determinismo, continuidade, hidrologia, água, erosão, natação, ecossistema, tempo, chunks, persistência)
 npm run preview:world  # validação visual headless: renderiza PNGs reais + mapas de campos
 npm run scenario:water # cenário reproduzível da física da água (volumes + orçamento)
 npm run scenario:erosion # cenário reproduzível de erosão/sedimentação/margens
 npm run scenario:eco     # ciclo floração → fruto → queda → semente → muda
 npm run visual:eco       # cena headless do ecossistema (frutos/insetos)
 npm run visual:fauna     # cena headless da fauna (coelho/sapo/ave)
+npm run visual:tileset   # comparação A/B do chão/água (Harmonious × pack)
+npm run sprites:pack     # regenera os tiles de chão/água a partir do pack gratuito
 npm run sprites:fauna    # regenera os sprites da fauna a partir da prancha
 npm run build        # typecheck + bundle
 ```
@@ -134,6 +136,10 @@ O jogo é jogável no celular (toque), não só no desktop:
   [`docs/FAUNA.md`](docs/FAUNA.md).
 - **Fauna abstrata**: modelo de atividade (alimento/água/abrigo/hora/estação) que já alimenta a
   dispersão de sementes; interfaces `FaunaAgent`/`FaunaSystem` para agentes visuais futuros.
+- **Tileset**: chão (grama/terra/areia/neve) e água vêm do pack gratuito,
+  recolorido para o idioma do Harmonious (32 px, casamento de tom, variantes +
+  espelho determinístico para quebrar a repetição). `T` alterna com o tileset
+  antigo ao vivo. Ver [`docs/TILESET.md`](docs/TILESET.md).
 - **Persistência** versionada em `localStorage` com diffs (plantas removidas/recrutadas,
   solo quantizado, deltas de terreno, lâmina e velocidade da água, relógio, posição).
 
@@ -145,6 +151,7 @@ O jogo é jogável no celular (toque), não só no desktop:
 - `docs/EROSAO.md` — erosão, transporte/deposição de sedimentos e margens arenosas.
 - `docs/ECOSSISTEMA.md` — floração, frutos, queda, sementes, insetos e pragas.
 - `docs/FAUNA.md` — fauna visual (coelho, sapo, ave): sprites, estados, chunks.
+- `docs/TILESET.md` — tileset de chão/água do pack: pipeline, recolorização, integração, limitações.
 - `docs/EVOLUCAO_CAUSAL.md` — ciclos água/solo/atmosfera/vegetação/fauna.
 - `docs/RELATORIO_FINAL.md` — relatório final pedido pelo prompt (testes, limitações, pendências).
 - `docs/PROMPT_MUNDO_PROCEDURAL_FLORESTA_VIVA.md` — o prompt original do projeto.
