@@ -13,7 +13,10 @@
     "preview:world": "tsx tools/preview.ts",
     "scenario:water": "tsx tools/water-scenario.ts",
     "scenario:erosion": "tsx tools/erosion-scenario.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "scenario:eco": "tsx tools/eco-scenario.ts",
+    "visual:eco": "tsx tools/eco-visual.ts",
+    "sprites:eco": "tsx tools/gen-eco-sprites.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

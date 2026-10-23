@@ -14,10 +14,12 @@ decomposição, erosão, clima, estações) evoluem em frequências separadas do
 ```bash
 npm install
 npm run dev          # abre o jogo (Vite em 0.0.0.0:5173)
-npm test             # 82 testes (determinismo, continuidade, hidrologia, água, erosão, natação, ecologia, tempo, chunks, persistência)
+npm test             # 94 testes (determinismo, continuidade, hidrologia, água, erosão, natação, ecossistema, tempo, chunks, persistência)
 npm run preview:world  # validação visual headless: renderiza PNGs reais + mapas de campos
 npm run scenario:water # cenário reproduzível da física da água (volumes + orçamento)
 npm run scenario:erosion # cenário reproduzível de erosão/sedimentação/margens
+npm run scenario:eco     # ciclo floração → fruto → queda → semente → muda
+npm run visual:eco       # cena headless do ecossistema (frutos/insetos)
 npm run build        # typecheck + bundle
 ```
 
@@ -43,7 +45,7 @@ Exemplos commitados em `docs/imagens/`.
 | tecla | ação |
 | --- | --- |
 | WASD / setas | mover (em água funda, nadar) |
-| `Q` | alterna modos de depuração (chunks, elevação, umidade, fluxo, correnteza, solo, vegetação, água, areia, sedimento, nutrientes) |
+| `Q` | alterna modos de depuração (chunks, elevação, umidade, fluxo, correnteza, solo, vegetação, água, areia, sedimento, eco, nutrientes) |
 | `P` | pausa o relógio do mundo |
 | `F` | derruba a árvore mais próxima (vira liteira; efeito ecológico real) |
 | `G` | planta uma muda da espécie mais adequada ao solo local |
@@ -103,6 +105,10 @@ O jogo é jogável no celular (toque), não só no desktop:
   feixes determinísticos, neve no inverno.
 - **Natação**: água profunda é atravessável nadando (limiar de 0,45 m), com fôlego,
   correnteza real empurrando o corpo e desenho submerso coerente com a lâmina.
+- **Ecossistema**: floração → polinização por abelhas/borboletas → fruto verde →
+  maduro → **queda natural** → fruto no chão → semente → muda; lagartas reduzem a
+  saúde (menos flores/frutos) e joaninhas controlam pragas. Ver
+  [`docs/ECOSSISTEMA.md`](docs/ECOSSISTEMA.md).
 - **Fauna**: modelo de atividade (alimento/água/abrigo/hora/estação) que já alimenta a
   dispersão de sementes; interfaces `FaunaAgent`/`FaunaSystem` para agentes visuais futuros.
 - **Persistência** versionada em `localStorage` com diffs (plantas removidas/recrutadas,
@@ -114,6 +120,7 @@ O jogo é jogável no celular (toque), não só no desktop:
 - `docs/PARAMETROS.md` — todos os parâmetros configuráveis e traços das espécies.
 - `docs/FISICA_DA_AGUA.md` — física da água: modelo, conservação, testes, limitações.
 - `docs/EROSAO.md` — erosão, transporte/deposição de sedimentos e margens arenosas.
+- `docs/ECOSSISTEMA.md` — floração, frutos, queda, sementes, insetos e pragas.
 - `docs/RELATORIO_FINAL.md` — relatório final pedido pelo prompt (testes, limitações, pendências).
 - `docs/PROMPT_MUNDO_PROCEDURAL_FLORESTA_VIVA.md` — o prompt original do projeto.
 

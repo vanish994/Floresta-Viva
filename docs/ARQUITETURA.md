@@ -162,6 +162,17 @@ Load seguro: versão/seed/gerador conferidos; diffs aplicados quando o chunk é 
   `CanvasRenderer` os carrega com base `'./'` (idem no dev server).
 - `build.assetsDir: 'bundle'`: evita colisão de nome com a pasta pública `assets/`.
 
+## Ecossistema (`src/world/ecosystem.ts`)
+
+- Fenologia por planta (`PlantRecord.pheno`): vegetativo → floração → fruto verde
+  → maduro → queda → fruto no chão → semente → muda. Roda no passo da biologia.
+- Fruto maduro cai por risco acumulado (varia por espécie, saúde, fruto e chuva);
+  o fruto no chão decompõe e pode gerar semente (com tetos por chunk).
+- Insetos em pool por chunk (não serializados): abelha/borboleta polinizam,
+  lagarta herbivora, joaninha preda. Passo curto e só perto do jogador.
+- Render: flores e frutos ancorados em `treeGeometry` (retângulo real da copa),
+  frutos no chão, sementes e insetos entram na ordenação por y.
+
 ## Fauna (`src/world/fauna.ts`)
 
 Sem sprites de animais no pacote ⇒ nada de fauna visual falsa. Existe um modelo
