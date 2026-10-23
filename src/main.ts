@@ -14,6 +14,7 @@ import { saveWorld, loadWorld, clearSave, applyChunkDiffs } from './world/persis
 import { seedFromString } from './core/rng';
 import { hash2 } from './core/rng';
 import { SPECIES } from './world/flora';
+import { RainAudio } from './audio/rain';
 
 const DEBUG_MODES: DebugMode[] = [null, 'chunks', 'elevation', 'moisture', 'flow', 'current', 'soil', 'veg', 'water', 'sand', 'sediment', 'nutrients'];
 
@@ -32,6 +33,7 @@ let fps = 60;
 
 const renderer = new CanvasRenderer();
 const touch = new TouchControls();
+const rainAudio = new RainAudio();
 
 const isSmallScreen = () => Math.min(window.innerWidth, window.innerHeight) < 560;
 
@@ -49,6 +51,7 @@ window.visualViewport?.addEventListener('resize', resize);
 resize();
 
 function createWorld(seed: number, load: boolean) {
+  rainAudio.stop();
   world = new World(
     isSmallScreen()
       ? { seed, loadRadiusChunks: 2, lookaheadChunks: 1, maxChunkGenPerFrame: 1, waterActiveRadiusChunks: 1 }
@@ -86,30 +89,41 @@ function newWorldFromInput() {
 
 document.getElementById('btn-new')!.addEventListener('click', newWorldFromInput);
 document.getElementById('btn-save')!.addEventListener('click', () => {
+  void rainAudio.unlock();
   const ok = saveWorld(world);
   el('hud-save').textContent = ok ? 'salvo ✓' : 'falha ao salvar';
 });
 document.getElementById('btn-debug')!.addEventListener('click', () => {
+  void rainAudio.unlock();
   debugIdx = (debugIdx + 1) % DEBUG_MODES.length;
 });
 document.getElementById('btn-pause')!.addEventListener('click', () => {
+  void rainAudio.unlock();
   world.clock.paused = !world.clock.paused;
 });
 document.getElementById('btn-char')!.addEventListener('click', () => {
+  void rainAudio.unlock();
   player.female = !player.female;
 });
 const rainButton = document.getElementById('btn-rain');
 if (rainButton) {
   rainButton.addEventListener('click', () => {
+    void rainAudio.unlock();
     const enabled = rainButton.getAttribute('aria-pressed') !== 'true';
     world.climate.setRainOverride(enabled);
     rainButton.textContent = enabled ? '☀ parar chuva' : '🌧 chuva';
     rainButton.setAttribute('aria-pressed', String(enabled));
   });
 }
+// Libera o áudio no primeiro gesto do jogador, inclusive em navegadores mobile.
+const unlockRainAudio = () => void rainAudio.unlock();
+window.addEventListener('pointerdown', unlockRainAudio, { once: true, passive: true });
+window.addEventListener('keydown', unlockRainAudio, { once: true, passive: true });
+
 const hud = document.getElementById('hud')!;
 const btnHud = document.getElementById('btn-hud')!;
 btnHud.addEventListener('click', () => {
+  void rainAudio.unlock();
   hud.classList.toggle('collapsed');
   btnHud.textContent = hud.classList.contains('collapsed') ? '+' : '–';
 });
@@ -159,6 +173,9 @@ function loop(now: number) {
   world.requestChunks(player.x, player.y, player.vx, player.vy);
   world.pumpGeneration();
   world.update(dtMs);
+
+  // A intensidade vem do mesmo clima que controla as gotas e a física da água.
+  rainAudio.update(world.climate.rainIntensity(world.clock.dayFloat), dt);
 
   const camX = Math.round(player.x - canvas.width / 2);
   const camY = Math.round(player.y - canvas.height / 2);
