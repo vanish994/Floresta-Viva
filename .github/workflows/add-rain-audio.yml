@@ -31,7 +31,7 @@ jobs:
           page = 'https://pixabay.com/sound-effects/nature-chuva-na-primavera-online-audio-convertercom-27904/'
           req = urllib.request.Request(page, headers={'User-Agent': 'Mozilla/5.0'})
           html = urllib.request.urlopen(req, timeout=30).read().decode('utf-8', 'ignore')
-          urls = re.findall(r'https://cdn\.pixabay\.com/audio/[^\"\\']+?\.mp3', html)
+          urls = re.findall(r"https://cdn\\.pixabay\\.com/audio/[^\"']+?\\.mp3", html)
           if not urls:
               raise SystemExit('Could not find the MP3 URL on the Pixabay page')
           url = urls[0].replace('\\u0026', '&')
