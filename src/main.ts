@@ -290,6 +290,7 @@ function updateHud(ops: number) {
   const near = nearestPlantInfo();
   el('hud-eco').textContent =
     `🌱 florindo ${eco.floweringPlants} · 🍎 no chão ${eco.groundFruits} · 🐝 insetos ${eco.insects}` +
+    (eco.animals > 0 ? ` · 🐇🐸🐦 ${eco.animals} animais` : '') +
     (eco.ecoArchived > 0 ? ` · 📦 ${eco.ecoArchived} chunks ativos fora de tela` : '') +
     (near ? ` · ${near}` : '');
 

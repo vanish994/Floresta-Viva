@@ -14,12 +14,14 @@ decomposição, erosão, clima, estações) evoluem em frequências separadas do
 ```bash
 npm install
 npm run dev          # abre o jogo (Vite em 0.0.0.0:5173)
-npm test             # 107 testes (determinismo, continuidade, hidrologia, água, erosão, natação, ecossistema, tempo, chunks, persistência)
+npm test             # 118 testes (determinismo, continuidade, hidrologia, água, erosão, natação, ecossistema, tempo, chunks, persistência)
 npm run preview:world  # validação visual headless: renderiza PNGs reais + mapas de campos
 npm run scenario:water # cenário reproduzível da física da água (volumes + orçamento)
 npm run scenario:erosion # cenário reproduzível de erosão/sedimentação/margens
 npm run scenario:eco     # ciclo floração → fruto → queda → semente → muda
 npm run visual:eco       # cena headless do ecossistema (frutos/insetos)
+npm run visual:fauna     # cena headless da fauna (coelho/sapo/ave)
+npm run sprites:fauna    # regenera os sprites da fauna a partir da prancha
 npm run build        # typecheck + bundle
 ```
 
@@ -110,7 +112,11 @@ O jogo é jogável no celular (toque), não só no desktop:
   saúde (menos flores/frutos) e joaninhas controlam pragas. Funciona no mundo
   infinito: o estado ecológico é arquivado ao descarregar o chunk e o tempo fora
   de tela é recuperado ao voltar. Ver [`docs/ECOSSISTEMA.md`](docs/ECOSSISTEMA.md).
-- **Fauna**: modelo de atividade (alimento/água/abrigo/hora/estação) que já alimenta a
+- **Fauna visual**: coelho (vegetação/grama), sapo (água/margem) e ave (árvores),
+  com estados idle/wander/seek/eat/flee/rest/sleep, fuga do jogador, hábitos
+  diurno/noturno e sprites extraídos da prancha fornecida em pixel art 1:1
+  (coelho 21×17, sapo 27×15, ave 19×14). Ver [`docs/FAUNA.md`](docs/FAUNA.md).
+- **Fauna abstrata**: modelo de atividade (alimento/água/abrigo/hora/estação) que já alimenta a
   dispersão de sementes; interfaces `FaunaAgent`/`FaunaSystem` para agentes visuais futuros.
 - **Persistência** versionada em `localStorage` com diffs (plantas removidas/recrutadas,
   solo quantizado, deltas de terreno, lâmina e velocidade da água, relógio, posição).
@@ -122,6 +128,7 @@ O jogo é jogável no celular (toque), não só no desktop:
 - `docs/FISICA_DA_AGUA.md` — física da água: modelo, conservação, testes, limitações.
 - `docs/EROSAO.md` — erosão, transporte/deposição de sedimentos e margens arenosas.
 - `docs/ECOSSISTEMA.md` — floração, frutos, queda, sementes, insetos e pragas.
+- `docs/FAUNA.md` — fauna visual (coelho, sapo, ave): sprites, estados, chunks.
 - `docs/RELATORIO_FINAL.md` — relatório final pedido pelo prompt (testes, limitações, pendências).
 - `docs/PROMPT_MUNDO_PROCEDURAL_FLORESTA_VIVA.md` — o prompt original do projeto.
 

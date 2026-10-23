@@ -100,6 +100,16 @@ aluvial 0,04. Leito de rio/lago infiltra 15–20% do valor da margem.
 Textura inicial de areia por solo (`sandBase`): arenoso 0,85 · aluvial 0,35 ·
 florestal 0,15 · argiloso 0,10 · rochoso 0,03.
 
+## Fauna visual (`src/world/fauna.ts`)
+
+| item | valor | efeito |
+| --- | --- | --- |
+| `FAUNA_CAP` | coelho 3 · sapo 3 · ave 2 | teto de animais por chunk |
+| velocidade | coelho 26 · sapo 14 · ave 34 px/s | passo local por hora de jogo |
+| `searchCells` | 2–3 células | raio de busca de fruta/água |
+| hábitos | coelho e ave diurnos, sapo noturno | dormem/ativos conforme a hora |
+| fuga | raio de 70 px do jogador | prioridade máxima no estado |
+
 ## Personagem / natação (`src/game/player.ts`)
 
 | constante | valor | efeito |

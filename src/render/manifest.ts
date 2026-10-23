@@ -94,6 +94,64 @@ export function insectRect(kind: string, frame: 0 | 1): Rect {
   return [col * 12, 0, 12, 12];
 }
 
+// --- fauna visual: coelho, sapo e ave (spritesheets gerados do reference) ----
+/**
+ * Cada espécie é uma spritesheet com uma animação por linha; grupos de frames
+ * redesenhados por `tools/extract-fauna-sprites.ts`. O tamanho da célula vem do
+ * arquivo `.json` ao lado do PNG (mesma pasta, mesmo nome).
+ */
+export interface FaunaSheet {
+  file: string;
+  cellW: number;
+  cellH: number;
+  maxFrames: number;
+  rows: Record<string, number>;
+  frameMs: Record<string, number>;
+}
+
+export const FAUNA_SHEETS: Record<'rabbit' | 'frog' | 'bird', FaunaSheet> = {
+  rabbit: {
+    file: 'Animals/rabbit.png',
+    cellW: 21, cellH: 17, maxFrames: 6,
+    rows: { idle: 0, walk: 1, run: 2, jump: 3, eat: 4, sleep: 5 },
+    frameMs: { idle: 260, walk: 150, run: 100, jump: 110, eat: 190, sleep: 420 },
+  },
+  frog: {
+    file: 'Animals/frog.png',
+    cellW: 27, cellH: 15, maxFrames: 5,
+    rows: { idle: 0, jump: 1, swim: 2, eat: 3, sleep: 4 },
+    frameMs: { idle: 300, jump: 140, swim: 150, eat: 220, sleep: 460 },
+  },
+  bird: {
+    file: 'Animals/bird.png',
+    cellW: 19, cellH: 14, maxFrames: 5,
+    rows: { idle: 0, fly: 1, land: 2, eat: 3, sleep: 4 },
+    frameMs: { idle: 260, fly: 90, land: 130, eat: 200, sleep: 440 },
+  },
+};
+
+/** recorte de um quadro da fauna (linha da animação × coluna do frame) */
+export function faunaRect(sheet: FaunaSheet, anim: string, frame: number): Rect {
+  const row = sheet.rows[anim] ?? 0;
+  const count = sheet.rows[anim] !== undefined
+    ? Math.max(1, Math.min(sheet.maxFrames, countFor(sheet, anim)))
+    : 1;
+  const col = ((frame % count) + count) % count;
+  return [col * sheet.cellW, row * sheet.cellH, sheet.cellW, sheet.cellH];
+}
+
+/** nº de frames de uma animação (mantido fora do JSON para ficar tipado) */
+const FAUNA_FRAMES: Record<string, Record<string, number>> = {
+  rabbit: { idle: 6, walk: 6, run: 5, jump: 5, eat: 6, sleep: 5 },
+  frog: { idle: 4, jump: 4, swim: 5, eat: 4, sleep: 4 },
+  bird: { idle: 5, fly: 4, land: 4, eat: 4, sleep: 4 },
+};
+
+function countFor(sheet: FaunaSheet, anim: string): number {
+  const key = sheet.file.includes('rabbit') ? 'rabbit' : sheet.file.includes('frog') ? 'frog' : 'bird';
+  return FAUNA_FRAMES[key]?.[anim] ?? sheet.maxFrames;
+}
+
 export const SPRITES: Record<string, SpriteDef> = {
   water_deep: F('Water/WaterTilesAnimated/Ocean_Water_Anim.png', [[32, 32, 32, 32], [96, 32, 32, 32], [160, 32, 32, 32], [224, 32, 32, 32]], 'bottom', 260),
   water_shallow: F('Water/WaterTilesAnimated/Ocean_Water_40%_Anim.png', [[32, 32, 32, 32], [96, 32, 32, 32], [160, 32, 32, 32], [224, 32, 32, 32]], 'bottom', 260),
@@ -145,6 +203,7 @@ export function allAssetFiles(): string[] {
   set.add(FRUIT_SHEET);
   set.add(SEED_SHEET);
   set.add(INSECT_SHEET);
+  for (const sheet of Object.values(FAUNA_SHEETS)) set.add(sheet.file);
   for (const s of Object.values(SPRITES)) set.add(s.file);
   return [...set];
 }

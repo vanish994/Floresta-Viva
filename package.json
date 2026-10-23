@@ -16,7 +16,9 @@
     "typecheck": "tsc --noEmit",
     "scenario:eco": "tsx tools/eco-scenario.ts",
     "visual:eco": "tsx tools/eco-visual.ts",
-    "sprites:eco": "tsx tools/gen-eco-sprites.ts"
+    "sprites:eco": "tsx tools/gen-eco-sprites.ts",
+    "sprites:fauna": "tsx tools/extract-fauna-sprites.ts",
+    "visual:fauna": "tsx tools/fauna-visual.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

@@ -173,7 +173,20 @@ Load seguro: versão/seed/gerador conferidos; diffs aplicados quando o chunk é 
 - Render: flores e frutos ancorados em `treeGeometry` (retângulo real da copa),
   frutos no chão, sementes e insetos entram na ordenação por y.
 
-## Fauna (`src/world/fauna.ts`)
+## Fauna visual (`src/world/fauna.ts`)
+
+- `seedFauna` nasce os agentes por chunk de forma determinística (seed + habitat):
+  coelho onde há vegetação/umidade, sapo junto à água, ave onde há árvores/insetos.
+- `stepFauna` roda estados simples (idle/wander/seek_food/seek_water/eat/flee/
+  sleep/swim/fly/land) com movimento local, fuga do jogador e rotina diurna
+  (sapo é noturno). Sem pathfinding e sem agente por frame fora da área do jogador.
+- Pool por chunk (`world.faunaAt`), descartado no unload e reconstruído ao voltar —
+  como os insetos, não vai para o save. `chunk.localInsects` dá à fauna a comida
+  disponível sem acoplar os dois sistemas.
+- Render: `emitAnimal` usa o mesmo pipeline (y-sort, câmera, iluminação) com
+  spritesheets `assets/Animals/{rabbit,frog,bird}.png` (1:1, sem esticar).
+
+## Fauna abstrata (`src/world/fauna.ts`, modelo anterior)
 
 Sem sprites de animais no pacote ⇒ nada de fauna visual falsa. Existe um modelo
 determinístico de atividade (copa/alimento, água, abrigo, hora, estação) que já altera o
