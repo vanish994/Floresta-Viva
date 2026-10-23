@@ -34,8 +34,13 @@ import {
   seedInsects,
   updatePestPressure,
   createEcoBudget,
+  snapshotEco,
+  restoreEco as restoreEcoState,
+  fastForwardEco,
+  type ChunkLookup,
   type EcoBudget,
   type EcoContext,
+  type EcoSnapshot,
   type Insect,
 } from './ecosystem';
 
@@ -59,6 +64,8 @@ export interface WorldStats {
   groundFruits: number;
   /** plantas florindo / com fruto nos chunks carregados */
   floweringPlants: number;
+  /** chunks fora de carga com estado ecológico guardado (mundo infinito) */
+  ecoArchived: number;
 }
 
 /** estado de água arquivado quando um chunk é descarregado */
@@ -111,6 +118,7 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
     insects: 0,
     groundFruits: 0,
     floweringPlants: 0,
+    ecoArchived: 0,
   };
   /** orçamento acumulado de água (m³) desde o início da sessão */
   readonly waterBudget: WaterBudget = createWaterBudget();
@@ -122,6 +130,14 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
   private insectsByChunk = new Map<string, Insect[]>();
   /** visitas de polinizadores por planta no intervalo do passo de biologia */
   private flowerVisits = new Map<number, number>();
+  /**
+   * Estado ecológico de chunks que saíram de carga. Sem isso, o mundo
+   * "reiniciaria" (plantas em vegetativo) toda vez que o jogador voltasse —
+   * com o arquivo, a fenologia continua e é recuperada no reload.
+   */
+  private ecoArchive = new Map<string, EcoSnapshot>();
+  /** lookup de chunk vizinho para insetos/polinização na fronteira */
+  private neighborLookup: ChunkLookup = (cellX, cellY) => this.cellAt(cellX, cellY);
   /** água de chunks descarregados — evita que a borda vire uma parede permanente */
   private waterArchive = new Map<string, WaterSnapshot>();
 
@@ -263,6 +279,8 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
       const dx = chunk.cx - center.cx, dy = chunk.cy - center.cy;
       if (Math.max(Math.abs(dx), Math.abs(dy)) > unload) {
         this.storeWaterSnapshot(key, chunk);
+        this.storeEcoSnapshot(key, chunk);
+        this.insectsByChunk.delete(key);
         this.chunks.delete(key);
       }
     }
@@ -282,11 +300,14 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
       chunk.lastBioHour = this.clock.totalHours;
       chunk.lastErosionHour = this.clock.totalHours;
       chunk.lastBankHour = this.clock.totalHours;
+      chunk.lastEcoHour = this.clock.totalHours;
       this.chunks.set(key, chunk);
       this.stats.chunksGenerated++;
       this.onChunkGenerated?.(chunk);
       // água simulada é mais recente que a geração: restaura ao recarregar
       this.restoreWaterSnapshot(key, chunk);
+      // ecossistema: retoma o estado salvo e avança o tempo que passou fora
+      this.restoreEcoSnapshot(key, chunk);
       made.push(chunk);
     }
     this.stats.chunksLoaded = this.chunks.size;
@@ -403,6 +424,7 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
           hour,
           detailed: true,
           budget: this.ecoBudget,
+          neighbors: this.neighborLookup,
         });
         // registra a planta cuja flor RECEBEU pólen neste passo (só quando o
         // inseto que chegou já vinha carregando pólen): é isso que fecha a
@@ -438,6 +460,7 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
         // quando o jogador se aproxima, o passo retoma e o estado é consistente)
         if (Math.abs(chunk.cx - center.cx) > 2 || Math.abs(chunk.cy - center.cy) > 2) continue;
         stepPhenology(chunk, cfg.periodBioHours, ctx, this.ecoBudget, this.flowerVisits);
+        chunk.lastEcoHour = this.clock.totalHours;
       }
       this.flowerVisits.clear();
       this.ecoAccumHours -= cfg.periodBioHours;
@@ -458,6 +481,7 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
     this.stats.insects = insects;
     this.stats.groundFruits = ground;
     this.stats.floweringPlants = flowering;
+    this.stats.ecoArchived = this.ecoArchive.size;
   }
 
   /** insetos ativos de um chunk (render/debug) */
@@ -577,6 +601,56 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
     chunk.surfaceInput.set(snap.surfaceInput);
     this.waterArchive.delete(key);
     chunk.waterDirty = true;
+  }
+
+  /**
+   * Arquiva o estado ecológico do chunk que sai de carga (fenologia, frutos no
+   * chão, sementes, pragas) com o instante de jogo. Cap de 192 chunks para a
+   * memória não crescer sem limite num mundo infinito.
+   */
+  private storeEcoSnapshot(key: string, chunk: Chunk): void {
+    // o instante do snapshot é o do ÚLTIMO passo ecológico real do chunk: se ele
+    // ficou carregado mas longe do jogador, esse tempo também é recuperado
+    const snap = snapshotEco(chunk, chunk.lastEcoHour);
+    if (
+      snap.plants.size === 0 &&
+      snap.groundFruits.length === 0 &&
+      snap.seedBed.length === 0 &&
+      snap.recruited.length === 0 &&
+      snap.removed.length === 0 &&
+      snap.pestPressure < 0.001
+    ) {
+      this.ecoArchive.delete(key);
+      return;
+    }
+    this.ecoArchive.set(key, snap);
+    while (this.ecoArchive.size > 192) {
+      const oldest = this.ecoArchive.keys().next().value;
+      if (oldest === undefined) break;
+      this.ecoArchive.delete(oldest);
+    }
+  }
+
+  /** Restaura e avança o estado ecológico de um chunk recém-gerado. */
+  private restoreEcoSnapshot(key: string, chunk: Chunk): void {
+    const snap = this.ecoArchive.get(key);
+    if (!snap) return;
+    this.ecoArchive.delete(key);
+    const elapsed = this.clock.totalHours - snap.hour;
+    chunk.lastEcoHour = this.clock.totalHours;
+    if (elapsed <= 0.01) {
+      restoreEcoState(chunk, snap);
+      return;
+    }
+    const ctx: EcoContext = {
+      cfg: this.cfg,
+      climate: this.climate,
+      worldDay: this.clock.dayFloat,
+      season: this.climate.seasonIndex(this.clock.dayFloat),
+      hourFraction: this.clock.hour / 24,
+      humidity: this.climate.meanWetness(),
+    };
+    fastForwardEco(chunk, snap, elapsed, ctx);
   }
 
   private bioAccum = new Map<string, number>();

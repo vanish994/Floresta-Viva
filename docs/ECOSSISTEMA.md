@@ -165,7 +165,53 @@ no preview.
 
 ---
 
-## 7. Limitações
+## 7. Mundo infinito por chunks (adaptação e validação)
+
+O ecossistema foi validado contra o streaming do mundo. Cinco problemas reais
+apareceram e foram corrigidos **sem reescrever a ecologia**:
+
+| problema encontrado | correção |
+| --- | --- |
+| fenologia nunca marcava o chunk como alterado → **não ia para o save** (só era salva se solo/água mudassem) | novo `chunk.ecoDirty`, gravado em `stepPhenology`/`stepInsects` e usado no `saveWorld` |
+| ao descarregar um chunk, a fenologia **se perdia** (a planta era regenerada em vegetativo) | `EcoSnapshot` por chunk (`snapshotEco`/`restoreEco`), arquivado no unload e restaurado no reload |
+| o tempo passado longe **congelava** a ecologia | `fastForwardEco`: recupera até 20 dias de jogo em ≤ 8 passos (custo limitado), a partir do último passo real (`chunk.lastEcoHour`) |
+| abelhas só viam plantas do **próprio chunk** (flor a 5 px da borda era invisível) | `ChunkLookup` opcional em `stepInsects`: busca local cruza para chunks vizinhos carregados; o estado é gravado no **dono** da flor |
+| pools de insetos de chunks descarregados **vazavam** | `insectsByChunk.delete(key)` no unload |
+| **mudas e árvores derrubadas desapareciam** ao descarregar (só existiam no save) | o snapshot guarda `recruited` (≤ 64) e `removed` (≤ 256); o restore mescla sem duplicar |
+
+Extras de coerência:
+
+- fruto cai **dentro** da área do chunk dono (clamp), evitando entidade "sem dono"
+  na fronteira;
+- arquivo ecológico limitado a 192 chunks, 220 plantas por snapshot (as com
+  fruto/praga entram primeiro) e sem plantas em estado padrão — memória medida em
+  **~212 KB de JSON para 19 chunks** numa viagem de 60 chunks;
+- HUD mostra `📦 N chunks ativos fora de tela`.
+
+Validação no mundo (probe real, seed 9090): morando 4 dias no chunk (0,0) →
+`14 plantas ativas · 6 frutos na copa · 4 no chão · 12 mudas`; viajando 25 chunks
+e ficando 1 dia fora → ao voltar, **`8 plantas ativas · 6 frutos na copa · 3 no
+chão · 1 semente · 12 mudas`**, `lastEcoHour` acertado com o presente e orçamento
+acumulado `216 polinizações · 52 frutos maduros · 30 quedas`. O mundo continuou
+sem o jogador, manteve as mudas e voltou consistente.
+
+### Testes do mundo infinito (`tests/ecosystem-chunks.test.ts`, 12 casos)
+
+1. estado sobrevive ao unload/reload (estágio, pragas, frutos no chão);
+2. tempo longe é recuperado (unidade + mundo com `lastEcoHour`);
+3. fast-forward limitado (1 ano de ausência em < 50 ms, teto de 20 dias);
+4. abelha poliniza flor no chunk vizinho e marca `ecoDirty` no dono;
+5. sem lookup o comportamento antigo é preservado (não cruza);
+6. frutos caem dentro do chunk dono (sem entidade fora do chunk);
+7. chunks fora de carga não mantêm pools de insetos (memória/custo);
+8. 8 dias de jogo sem explosão: tetos de frutos (48), sementes (24) e insetos (12/chunk);
+9. save/load grava o ecossistema **sem** mudança de solo/água (`ecoDirty`);
+10. determinismo: mesma seed + mesmos passos ⇒ mesmo estado ecológico;
+11. snapshot limitado em memória (≤ 220 plantas, prioriza frutos/pragas);
+12. reload repetido não duplica frutos nem sementes;
+13. mudas e árvores derrubadas sobrevivem ao unload/reload (uma única vez cada).
+
+## 8. Limitações
 
 1. Insetos não são persistidos (por decisão): ao recarregar, a população é
    reconstruída a partir da flora local — o "estado" que importa (flores,
@@ -183,11 +229,11 @@ no preview.
 
 ---
 
-## 8. Como reproduzir
+## 9. Como reproduzir
 
 ```bash
 npm install
-npm test                          # 94 testes
+npm test                          # 107 testes
 npm run scenario:eco              # linha do tempo do ciclo (96 h)
 npm run visual:eco                # cena headless + zoom em .tmp/eco/
 npx tsx tools/gen-eco-sprites.ts  # regenera frutos/sementes/insetos

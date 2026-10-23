@@ -167,6 +167,10 @@ Campos por célula: `moisture, litter, humus, nAvail, pAvail, kAvail, pH, microb
 | `fruitHoldDays` (por espécie) | 0.6–1.4 dias | permanência média do fruto maduro antes de cair |
 | `fruitingSeason` (por espécie) | [0..1]⁴ | frutificação por estação (inverno ≈ 0) |
 
+Arquivo de chunks fora de carga: até 192 chunks, 220 plantas por snapshot,
+recuperação de no máximo 20 dias de jogo em ≤ 8 passos (`FF_MAX_HOURS`,
+`FF_STEP_HOURS`, `FF_MAX_STEPS`, `ECO_SNAPSHOT_MAX_PLANTS`).
+
 A queda usa risco acumulado: `1 − exp(−(Δt/hold)·(0,45 + idade²)·chuva)`, com
 `hold` variando por espécie, saúde e por fruto (`holdBias`) — fruto maduro nunca
 fica indefinidamente na planta.

@@ -53,7 +53,7 @@ em TypeScript + Canvas2D (Vite), reaproveitando 100% dos sprites do pacote.
   `sanitize.ts`
 - `src/game/` — `player.ts`, `input.ts`; `src/main.ts`; `index.html`; `src/ui/style.css`
 - `tools/` — `preview.ts`, `software.ts`, `png.ts`, `gen-manifest.mjs`, `data/*`
-- `tests/` — 12 arquivos, 94 testes
+- `tests/` — 13 arquivos, 107 testes
 - `docs/` — este relatório, `ARQUITETURA.md`, `PARAMETROS.md`, `imagens/`
 
 ## Como funciona a geração por seed e chunks

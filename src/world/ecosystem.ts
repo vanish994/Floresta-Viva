@@ -174,6 +174,147 @@ function seasonFactor(sp: (typeof SPECIES)[number], season: number): number {
 }
 
 // ---------------------------------------------------------------------------
+// estado ecológico por chunk (sobrevive a unload/reload no mundo infinito)
+// ---------------------------------------------------------------------------
+
+/** estado ecológico serializável de um chunk (plantas + chão + pragas) */
+export interface EcoSnapshot {
+  /** hora de jogo em que o snapshot foi tirado */
+  hour: number;
+  plants: Map<number, PlantPhenology>;
+  groundFruits: GroundFruit[];
+  seedBed: SeedEntry[];
+  pestPressure: number;
+  /**
+   * Plantas que nasceram pela simulação (mudas de semente) e ids removidos
+   * (árvores derrubadas pelo jogador/erosão). Sem isso, um chunk descarregado
+   * perderia as mudas e as árvores cortadas voltariam ao ser regenerado.
+   */
+  recruited: PlantRecord[];
+  removed: number[];
+}
+
+/**
+ * Captura o estado ecológico do chunk no instante `hour`.
+ *
+ * Memória: só entram plantas com estado NÃO padrão (floração, fruto, praga) e
+ * as de fruto/praga entram primeiro — um chunk tem ~470 plantas e o arquivo
+ * pode guardar 192 chunks; guardar tudo custaria dezenas de MB.
+ */
+export function snapshotEco(chunk: Chunk, hour: number): EcoSnapshot {
+  const plants = new Map<number, PlantPhenology>();
+  const store = (plant: PlantRecord, p: PlantPhenology) => {
+    if (plants.size >= ECO_SNAPSHOT_MAX_PLANTS) return;
+    plants.set(plant.id, {
+      stage: p.stage,
+      timer: p.timer,
+      flowers: p.flowers,
+      pests: p.pests,
+      dormant: p.dormant,
+      fruits: p.fruits.map((f) => ({ ...f })),
+    });
+  };
+  const important: PlantRecord[] = [];
+  const rest: PlantRecord[] = [];
+  for (const plant of chunk.livePlants()) {
+    const p = plant.pheno;
+    if (!p) continue;
+    const trivial = p.stage === 'vegetative' && p.fruits.length === 0 && p.flowers === 0 && p.pests < 0.01;
+    if (trivial) continue;
+    if (p.fruits.length > 0 || p.pests > 0.05) important.push(plant);
+    else rest.push(plant);
+  }
+  for (const plant of important) store(plant, plant.pheno!);
+  for (const plant of rest) store(plant, plant.pheno!);
+  return {
+    hour,
+    plants,
+    groundFruits: chunk.groundFruits.map((g) => ({ ...g, slot: { ...g.slot } })),
+    seedBed: chunk.seedBed.map((s) => ({ ...s })),
+    pestPressure: chunk.pestPressure,
+    recruited: chunk.recruitedPlants.slice(0, ECO_SNAPSHOT_MAX_RECRUITS).map((p) => ({ ...p })),
+    removed: [...chunk.removedPlants].slice(-ECO_SNAPSHOT_MAX_REMOVED),
+  };
+}
+
+/** devolve o estado ecológico ao chunk recém-gerado (sem duplicar nada) */
+export function restoreEco(chunk: Chunk, snap: EcoSnapshot): void {
+  chunk.groundFruits = snap.groundFruits.map((g) => ({ ...g, slot: { ...g.slot } }));
+  chunk.seedBed = snap.seedBed.map((s) => ({ ...s }));
+  chunk.pestPressure = snap.pestPressure;
+  // árvores derrubadas continuam derrubadas
+  for (const id of snap.removed) chunk.removedPlants.add(id);
+  // mudas continuam no mundo (sem duplicar as que já existem na geração)
+  if (snap.recruited.length > 0) {
+    const known = new Set<number>();
+    for (const p of chunk.plants) known.add(p.id);
+    for (const p of chunk.recruitedPlants) known.add(p.id);
+    for (const p of snap.recruited) {
+      if (known.has(p.id) || chunk.removedPlants.has(p.id)) continue;
+      chunk.recruitedPlants.push({ ...p, pheno: undefined });
+      known.add(p.id);
+    }
+    chunk.rebuildPlantIndex();
+  }
+  chunk.ecoDirty = true;
+  if (snap.plants.size === 0) return;
+  for (const plant of chunk.livePlants()) {
+    const saved = snap.plants.get(plant.id);
+    if (!saved) continue;
+    plant.pheno = {
+      stage: saved.stage,
+      timer: saved.timer,
+      flowers: saved.flowers,
+      pests: saved.pests,
+      dormant: saved.dormant,
+      fruits: saved.fruits.map((f) => ({ ...f })),
+    };
+  }
+  chunk.ecoDirty = true;
+}
+
+/**
+ * Avança o estado ecológico de um chunk que ficou fora de carga por `hours`
+ * horas de jogo. Usa passos grossos e limitados (continuidade, não exatidão):
+ * o mundo "continua" enquanto o jogador está longe, sem custo por chunk/frame.
+ */
+export function fastForwardEco(
+  chunk: Chunk,
+  snap: EcoSnapshot,
+  hours: number,
+  ctx: EcoContext,
+  budget: EcoBudget = createEcoBudget(),
+): EcoBudget {
+  restoreEco(chunk, snap);
+  const elapsed = Math.min(Math.max(0, hours), FF_MAX_HOURS);
+  if (elapsed <= 0) return budget;
+  const steps = Math.min(FF_MAX_STEPS, Math.max(1, Math.ceil(elapsed / FF_STEP_HOURS)));
+  const dt = elapsed / steps;
+  const dayPerHour = 1 / 24;
+  for (let k = 0; k < steps; k++) {
+    const stepCtx: EcoContext = {
+      ...ctx,
+      worldDay: ctx.worldDay + (elapsed - dt * (steps - k)) * dayPerHour,
+      season: ctx.climate.seasonIndex(ctx.worldDay + (elapsed - dt * (steps - k)) * dayPerHour),
+    };
+    stepPhenology(chunk, dt, stepCtx, budget);
+  }
+  return budget;
+}
+
+/** teto de plantas com estado guardadas por snapshot (memória do arquivo) */
+export const ECO_SNAPSHOT_MAX_PLANTS = 220;
+/** teto de mudas e de ids removidos guardados por snapshot */
+export const ECO_SNAPSHOT_MAX_RECRUITS = 64;
+export const ECO_SNAPSHOT_MAX_REMOVED = 256;
+
+/** teto de tempo "recuperado" ao voltar a um chunk (evita saltos absurdos) */
+export const FF_MAX_HOURS = 24 * 20;
+/** passo máximo de recuperação e número máximo de passos (custo limitado) */
+export const FF_STEP_HOURS = 6;
+export const FF_MAX_STEPS = 8;
+
+// ---------------------------------------------------------------------------
 // passo fenológico (por chunk, frequência da biologia)
 // ---------------------------------------------------------------------------
 
@@ -379,6 +520,12 @@ export function stepPhenology(
   }
 
   // --- frutos no chão: decomposição → semente ----------------------------
+  // qualquer mudança de fenologia/frutos/pragas precisa ir para o save
+  if (budget.flowered || budget.pollinated || budget.ripened || budget.fallen || budget.seeds) {
+    chunk.ecoDirty = true;
+  }
+  if (chunk.groundFruits.length > 0 || chunk.seedBed.length > 0) chunk.ecoDirty = true;
+
   if (chunk.groundFruits.length > 0) {
     const keep: typeof chunk.groundFruits = [];
     for (const gf of chunk.groundFruits) {
@@ -454,8 +601,15 @@ function dropFruit(chunk: Chunk, plant: PlantRecord, slotData: FruitSlot, cfg: W
   const r = hash2(cfg.seed ^ 0x9e12, plant.id, Math.floor(ctx.worldDay * 24) + chunk.groundFruits.length, 620);
   const a = r * Math.PI * 2;
   const dist = 8 + r * 22; // cai perto, com pequeno espalhamento natural
-  const x = plant.x + Math.cos(a) * dist;
-  const y = plant.y + Math.sin(a) * dist * 0.5 + 6;
+  // o fruto pertence ao chunk da planta-mãe: a posição é contida na área do
+  // chunk para não existir fruto "fora do dono" (render/save coerentes)
+  const cellPx = cfg.simCellTiles * cfg.tileSize;
+  const minX = chunk.cx * cellPx + 2;
+  const maxX = (chunk.cx + 1) * cellPx - 2;
+  const minY = chunk.cy * cellPx + 2;
+  const maxY = (chunk.cy + 1) * cellPx - 2;
+  const x = clamp(plant.x + Math.cos(a) * dist, minX, maxX);
+  const y = clamp(plant.y + Math.sin(a) * dist * 0.5 + 6, minY, maxY);
   chunk.groundFruits.push({
     id: hash2(cfg.seed, plant.id + chunk.groundFruits.length, Math.floor(ctx.worldDay), 621),
     fruit: sp.fruit,
@@ -617,6 +771,8 @@ export interface InsectStepOptions {
   /** true para simular em detalhe (perto do jogador) */
   detailed: boolean;
   budget: EcoBudget;
+  /** chunks vizinhos carregados (permite polinizar na fronteira) */
+  neighbors?: ChunkLookup;
 }
 
 /** distância de busca (px) — insetos não procuram o mundo inteiro */
@@ -638,7 +794,7 @@ export function stepInsects(insects: Insect[], cfg: WorldConfig, opts: InsectSte
     insect.cooldown = Math.max(0, insect.cooldown - 1);
     insect.phase += 0.35;
 
-    const target = insect.targetId >= 0 ? plantRecordById(chunk, insect.targetId) : undefined;
+    const target = insect.targetId >= 0 ? plantByTarget(chunk, insect.targetId, opts.neighbors) : undefined;
 
     switch (insect.state) {
       case 'wander': {
@@ -646,7 +802,7 @@ export function stepInsects(insects: Insect[], cfg: WorldConfig, opts: InsectSte
         if (insect.cooldown > 0) break;
         if (insect.kind === 'bee' || insect.kind === 'butterfly') {
           if (opts.detailed) {
-            const flower = findPlant(chunk, insect, (p) => hasOpenFlower(p));
+            const flower = findPlant(chunk, insect, (p) => hasOpenFlower(p), opts.neighbors);
             if (flower) {
               insect.targetId = flower.id;
               insect.state = 'seek-flower';
@@ -654,10 +810,12 @@ export function stepInsects(insects: Insect[], cfg: WorldConfig, opts: InsectSte
             }
           }
         } else if (insect.kind === 'caterpillar') {
-          const food = findPlant(chunk, insect, (p) => {
-            const sp = SPECIES[p.species];
-            return sp.id !== 'araucaria' && plantSize(p, chunk, cfg, opts.worldDay) > 0.3;
-          });
+          const food = findPlant(
+            chunk,
+            insect,
+            (p) => SPECIES[p.species].id !== 'araucaria' && plantSize(p, chunk, cfg, opts.worldDay) > 0.3,
+            opts.neighbors,
+          );
           if (food) {
             insect.targetId = food.id;
             insect.state = 'seek-plant';
@@ -681,6 +839,8 @@ export function stepInsects(insects: Insect[], cfg: WorldConfig, opts: InsectSte
         }
         const arrived = moveToward(insect, target.x, target.y - 6);
         if (arrived) {
+          // a flor pode estar em outro chunk carregado: o estado vai no dono
+          const owner = chunkOfPlant(target, chunk, opts.neighbors);
           const sp = SPECIES[target.species];
           const compatible = insect.pollen && insect.pollenSpecies === target.species;
           const ok = pollinate(target, cfg, opts.worldDay, 1, compatible);
@@ -688,6 +848,7 @@ export function stepInsects(insects: Insect[], cfg: WorldConfig, opts: InsectSte
           insect.pollen = true;
           insect.pollenSpecies = target.species;
           insect.energy = clamp(insect.energy + 0.15 * sp.nectar, 0, 1);
+          if (owner) owner.ecoDirty = true;
           insect.state = 'wander';
           insect.targetId = -1;
           insect.cooldown = 45;
@@ -705,7 +866,9 @@ export function stepInsects(insects: Insect[], cfg: WorldConfig, opts: InsectSte
           const pheno = phenoOf(target);
           pheno.pests = clamp(pheno.pests + 0.05, 0, 1);
           insect.energy = clamp(insect.energy + 0.2, 0, 1);
-          chunk.pestPressure = clamp((chunk.pestPressure ?? 0) + 0.03, 0, 1);
+          const owner = chunkOfPlant(target, chunk, opts.neighbors) ?? chunk;
+          owner.pestPressure = clamp((owner.pestPressure ?? 0) + 0.03, 0, 1);
+          owner.ecoDirty = true;
           insect.state = 'feeding';
           insect.cooldown = 180;
         }
@@ -725,7 +888,7 @@ export function stepInsects(insects: Insect[], cfg: WorldConfig, opts: InsectSte
           chunk.pestPressure = Math.max(0, before - 0.02);
           insect.energy = clamp(insect.energy + 0.05, 0, 1);
           // pragas das plantas PRÓXIMAS caem (busca local, não no chunk inteiro)
-          const nearby = findNearbyPlants(chunk, insect.x, insect.y, 2);
+          const nearby = findNearbyPlants(chunk, insect.x, insect.y, 2, opts.neighbors);
           for (const p of nearby) {
             const pheno = p.pheno;
             if (pheno) pheno.pests = clamp(pheno.pests - 0.02, 0, 1);
@@ -758,51 +921,122 @@ function moveToward(insect: Insect, tx: number, ty: number): boolean {
  * usando o índice espacial existente (`plantsInCell`). Evita varrer todas as
  * plantas do chunk a cada passo — custo O(células), não O(plantas).
  */
-function findPlant(chunk: Chunk, insect: Insect, ok: (p: PlantRecord) => boolean): PlantRecord | undefined {
+/** acesso a chunks vizinhos (a fronteira do chunk não é parede para os insetos) */
+export type ChunkLookup = (cellX: number, cellY: number) => Chunk | null;
+
+function findPlant(
+  chunk: Chunk,
+  insect: Insect,
+  ok: (p: PlantRecord) => boolean,
+  neighbor?: ChunkLookup,
+): PlantRecord | undefined {
   const cellPx = Math.max(1, chunk.tiles * 32 / chunk.n);
   const lx0 = Math.floor(insect.x / cellPx) - chunk.cx * chunk.n;
   const ly0 = Math.floor(insect.y / cellPx) - chunk.cy * chunk.n;
   const R = 3;
   let best: PlantRecord | undefined;
   let bestD = SEARCH_RADIUS * SEARCH_RADIUS;
-  for (let oy = -R; oy <= R; oy++) {
-    const ly = ly0 + oy;
-    if (ly < 0 || ly >= chunk.n) continue;
-    for (let ox = -R; ox <= R; ox++) {
-      const lx = lx0 + ox;
-      if (lx < 0 || lx >= chunk.n) continue;
-      for (const plant of chunk.plantsInCell(lx, ly)) {
-        if (chunk.removedPlants.has(plant.id)) continue;
-        if (!ok(plant)) continue;
-        const d = (plant.x - insect.x) ** 2 + (plant.y - insect.y) ** 2;
-        if (d < bestD) {
-          bestD = d;
-          best = plant;
-        }
+  const consider = (owner: Chunk, lx: number, ly: number) => {
+    for (const plant of owner.plantsInCell(lx, ly)) {
+      if (owner.removedPlants.has(plant.id)) continue;
+      if (!ok(plant)) continue;
+      const d = (plant.x - insect.x) ** 2 + (plant.y - insect.y) ** 2;
+      if (d < bestD) {
+        bestD = d;
+        best = plant;
       }
+    }
+  };
+  for (let oy = -R; oy <= R; oy++) {
+    for (let ox = -R; ox <= R; ox++) {
+      const wx = lx0 + ox;
+      const wy = ly0 + oy;
+      if (wx >= 0 && wy >= 0 && wx < chunk.n && wy < chunk.n) {
+        consider(chunk, wx, wy);
+        continue;
+      }
+      if (!neighbor) continue;
+      const other = neighbor(chunk.cx * chunk.n + wx, chunk.cy * chunk.n + wy);
+      if (!other || other === chunk) continue;
+      const olx = chunk.cx * chunk.n + wx - other.cx * other.n;
+      const oly = chunk.cy * chunk.n + wy - other.cy * other.n;
+      if (olx < 0 || oly < 0 || olx >= other.n || oly >= other.n) continue;
+      consider(other, olx, oly);
     }
   }
   return best;
 }
 
 /** plantas em um raio de células ao redor de (x, y) — busca local barata */
-export function findNearbyPlants(chunk: Chunk, x: number, y: number, cells: number): PlantRecord[] {
+export function findNearbyPlants(
+  chunk: Chunk,
+  x: number,
+  y: number,
+  cells: number,
+  neighbor?: ChunkLookup,
+): PlantRecord[] {
   const cellPx = Math.max(1, (chunk.tiles * 32) / chunk.n);
   const lx0 = Math.floor(x / cellPx) - chunk.cx * chunk.n;
   const ly0 = Math.floor(y / cellPx) - chunk.cy * chunk.n;
   const out: PlantRecord[] = [];
+  const push = (owner: Chunk, lx: number, ly: number) => {
+    for (const p of owner.plantsInCell(lx, ly)) {
+      if (!owner.removedPlants.has(p.id)) out.push(p);
+    }
+  };
   for (let oy = -cells; oy <= cells; oy++) {
-    const ly = ly0 + oy;
-    if (ly < 0 || ly >= chunk.n) continue;
     for (let ox = -cells; ox <= cells; ox++) {
-      const lx = lx0 + ox;
-      if (lx < 0 || lx >= chunk.n) continue;
-      for (const p of chunk.plantsInCell(lx, ly)) {
-        if (!chunk.removedPlants.has(p.id)) out.push(p);
+      const wx = lx0 + ox;
+      const wy = ly0 + oy;
+      if (wx >= 0 && wy >= 0 && wx < chunk.n && wy < chunk.n) {
+        push(chunk, wx, wy);
+        continue;
       }
+      if (!neighbor) continue;
+      const other = neighbor(chunk.cx * chunk.n + wx, chunk.cy * chunk.n + wy);
+      if (!other || other === chunk) continue;
+      const olx = chunk.cx * chunk.n + wx - other.cx * other.n;
+      const oly = chunk.cy * chunk.n + wy - other.cy * other.n;
+      if (olx < 0 || oly < 0 || olx >= other.n || oly >= other.n) continue;
+      push(other, olx, oly);
     }
   }
   return out;
+}
+
+/** acha a planta alvo em qualquer chunk carregado (a abelha cruza a fronteira) */
+function plantByTarget(chunk: Chunk, id: number, neighbor?: ChunkLookup): PlantRecord | undefined {
+  const here = plantRecordById(chunk, id);
+  if (here) return here;
+  if (!neighbor) return undefined;
+  const cellPx = Math.max(1, (chunk.tiles * 32) / chunk.n);
+  const cx = Math.floor(chunk.cx * chunk.n + chunk.n / 2);
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const) {
+    const other = neighbor(
+      Math.floor((cx + (dx * chunk.n) / 2)),
+      Math.floor(chunk.cy * chunk.n + chunk.n / 2 + (dy * chunk.n) / 2),
+    );
+    if (!other || other === chunk) continue;
+    const found = plantRecordById(other, id);
+    if (found) return found;
+  }
+  void cellPx;
+  return undefined;
+}
+
+/** chunk dono de uma planta (para gravar pragas/frutos no lugar certo) */
+function chunkOfPlant(plant: PlantRecord, chunk: Chunk, neighbor?: ChunkLookup): Chunk | null {
+  if (plantRecordById(chunk, plant.id)) return chunk;
+  if (!neighbor) return null;
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const) {
+    const other = neighbor(
+      Math.floor(chunk.cx * chunk.n + chunk.n / 2 + (dx * chunk.n)),
+      Math.floor(chunk.cy * chunk.n + chunk.n / 2 + (dy * chunk.n)),
+    );
+    if (!other || other === chunk) continue;
+    if (plantRecordById(other, plant.id)) return other;
+  }
+  return null;
 }
 
 /** atualiza os contadores de pragas/predadores do chunk (mapa por célula) */

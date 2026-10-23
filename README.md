@@ -14,7 +14,7 @@ decomposição, erosão, clima, estações) evoluem em frequências separadas do
 ```bash
 npm install
 npm run dev          # abre o jogo (Vite em 0.0.0.0:5173)
-npm test             # 94 testes (determinismo, continuidade, hidrologia, água, erosão, natação, ecossistema, tempo, chunks, persistência)
+npm test             # 107 testes (determinismo, continuidade, hidrologia, água, erosão, natação, ecossistema, tempo, chunks, persistência)
 npm run preview:world  # validação visual headless: renderiza PNGs reais + mapas de campos
 npm run scenario:water # cenário reproduzível da física da água (volumes + orçamento)
 npm run scenario:erosion # cenário reproduzível de erosão/sedimentação/margens
@@ -107,8 +107,9 @@ O jogo é jogável no celular (toque), não só no desktop:
   correnteza real empurrando o corpo e desenho submerso coerente com a lâmina.
 - **Ecossistema**: floração → polinização por abelhas/borboletas → fruto verde →
   maduro → **queda natural** → fruto no chão → semente → muda; lagartas reduzem a
-  saúde (menos flores/frutos) e joaninhas controlam pragas. Ver
-  [`docs/ECOSSISTEMA.md`](docs/ECOSSISTEMA.md).
+  saúde (menos flores/frutos) e joaninhas controlam pragas. Funciona no mundo
+  infinito: o estado ecológico é arquivado ao descarregar o chunk e o tempo fora
+  de tela é recuperado ao voltar. Ver [`docs/ECOSSISTEMA.md`](docs/ECOSSISTEMA.md).
 - **Fauna**: modelo de atividade (alimento/água/abrigo/hora/estação) que já alimenta a
   dispersão de sementes; interfaces `FaunaAgent`/`FaunaSystem` para agentes visuais futuros.
 - **Persistência** versionada em `localStorage` com diffs (plantas removidas/recrutadas,

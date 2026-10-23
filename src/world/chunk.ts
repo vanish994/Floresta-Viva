@@ -123,11 +123,15 @@ export class Chunk {
   lastBioHour = 0;
   lastErosionHour = 0;
   lastBankHour = 0;
+  /** última hora de jogo em que a fenologia deste chunk avançou de verdade */
+  lastEcoHour = 0;
   dirty = false;
   /** solo modificado pela simulação (precisa ir para o save) */
   soilDirty = false;
   /** água modificada pela física (precisa ir para o save) */
   waterDirty = false;
+  /** fenologia/pragas/frutos no chão mudaram (precisa ir para o save) */
+  ecoDirty = false;
   ready = false;
 
   constructor(cx: number, cy: number, cfg: WorldConfig) {

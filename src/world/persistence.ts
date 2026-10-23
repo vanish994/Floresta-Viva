@@ -65,7 +65,7 @@ export function saveWorld(world: World, storage: Storage = localStorage): boolea
     };
     let count = 0;
     for (const [key, chunk] of world.chunks) {
-      if (!chunk.dirty && !chunk.waterDirty) continue;
+      if (!chunk.dirty && !chunk.waterDirty && !chunk.ecoDirty) continue;
       if (count > 220) break;
       const diff: ChunkDiff = {
         removed: [...chunk.removedPlants],
@@ -113,6 +113,7 @@ export function saveWorld(world: World, storage: Storage = localStorage): boolea
         diff.seeds = chunk.seedBed.map((s2) => [Math.round(s2.x), Math.round(s2.y), s2.species, Math.round(s2.ageHours), Math.round(s2.seedKey)]);
       }
       if (chunk.pestPressure > 0.001) diff.pests = Math.round(chunk.pestPressure * 100);
+      chunk.ecoDirty = false;
       data.chunks[key] = diff;
       count++;
     }
