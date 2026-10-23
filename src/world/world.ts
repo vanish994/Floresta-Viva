@@ -497,6 +497,15 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
       const key = chunkKeyStr(chunk.cx, chunk.cy);
       const animals = this.faunaByChunk.get(key);
       if (!animals || animals.length === 0) continue;
+      // vizinhança do chunk + anel de 8 chunks (montada uma vez por frame)
+      const neighbourhood: Animal[] = animals.slice();
+      for (let oy = -1; oy <= 1; oy++) {
+        for (let ox = -1; ox <= 1; ox++) {
+          if (ox === 0 && oy === 0) continue;
+          const other = this.faunaByChunk.get(chunkKeyStr(chunk.cx + ox, chunk.cy + oy));
+          if (other) for (const a of other) neighbourhood.push(a);
+        }
+      }
       const deaths: number[] = [];
       stepFauna(animals, cfg, gameHours, {
         worldDay: dayFloat,
@@ -540,27 +549,16 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
         },
         onDeath: (dead) => deaths.push(dead.id),
         // --- percepção de criaturas (predador/presa) ----------------------
+        // A lista do chunk + 8 vizinhos é montada UMA vez por frame; cada
+        // animal só filtra por raio. Evita varrer o mapa por animal.
         nearbyAnimals: (self, radius) => {
           const r2 = radius * radius;
           const out: Animal[] = [];
-          for (const other of animals) {
-            if (other === self) continue;
+          for (const other of neighbourhood) {
+            if (other === self || other.state === 'dead') continue;
             const dx = other.x - self.x;
             const dy = other.y - self.y;
             if (dx * dx + dy * dy <= r2) out.push(other);
-          }
-          // vizinhos imediatos (fronteira do chunk) também são percebidos
-          for (let oy = -1; oy <= 1; oy++) {
-            for (let ox = -1; ox <= 1; ox++) {
-              if (ox === 0 && oy === 0) continue;
-              const other = this.faunaByChunk.get(chunkKeyStr(chunk.cx + ox, chunk.cy + oy));
-              if (!other) continue;
-              for (const a of other) {
-                const dx = a.x - self.x;
-                const dy = a.y - self.y;
-                if (dx * dx + dy * dy <= r2) out.push(a);
-              }
-            }
           }
           return out;
         },

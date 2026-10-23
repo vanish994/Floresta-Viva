@@ -102,7 +102,7 @@ chunk dono.
 | 10 | render | `blit` correto (célula nativa), proporção preservada, y-sort |
 | 11 | integração | mundo semeia fauna, `stats.animals` bate e ela se move |
 
-`npm test` → **16 arquivos, 156 testes aprovados** (15 novos em
+`npm test` → **18 arquivos, 179 testes aprovados** (15 novos em
 `tests/predator.test.ts`: nascer, perceber, perseguir, atacar, matar, comer,
 fome cair, desistir, coelho e sapo fugindo, tetos, sem presas, predação real,
 render e traços). `npm run typecheck` e
@@ -159,6 +159,54 @@ aumentam a pressão, as presas caem e depois **as próprias cobras passam fome**
 
 Custo: **0,87 ms/frame** no desktop (49 chunks) e **0,50 ms/frame** no mobile
 (25 chunks), praticamente igual a antes da cobra.
+
+## 6.2 IA comportamental completa (atualização)
+
+### Curva de atividade por espécie (`activityAt`)
+Substitui o `if (night) sleep()` por uma curva contínua 0..1 com pico próprio:
+
+| espécie | pico | vale |
+| --- | --- | --- |
+| coelho | manhã (1,0) e tarde (0,85) | madrugada (0,12) |
+| ave | amanhecer (1,0) e tarde (0,85) | noite (0,05) |
+| sapo | crepúsculo e noite (1,0) | meio-dia (0,20) |
+| cobra | crepúsculo/amanhecer (1,0), noite 0,65 | meio-dia (0,22) |
+
+A atividade modula **sono** (dorme abaixo de 0,22, salvo fome/sede/perigo),
+**velocidade** (0,55 + 0,45·atividade; fuga não é penalizada), **caça**
+(cobra só caça acima de 0,25) e **esconder-se** (abaixo de 0,4).
+
+### Correções de simulação
+- **`chaseHours += 0.016` removido**: a duração da perseguição agora soma o
+  delta real (`dtHours`), então o comportamento é idêntico em qualquer FPS
+  (teste `9. o tempo de perseguição não depende do tamanho do passo`).
+- **Ataque por bote**: antes o dano era aplicado a cada tick enquanto o estado
+  `attack` durasse. Agora cada investida dá **um** dano fixo
+  (`attackDamage`), com `STRIKE_WINDOW_HOURS` (0,08 h) de janela e
+  `ATTACK_COOLDOWN_HOURS` (0,22 h) de descanso — medido em teste
+  (`5. o bote aplica dano UMA vez por investida`, `6. o cooldown impede…`).
+- **Fuga por espécie**: coelho é o mais cauteloso (alcance ×1,45, zigue-zague
+  lateral); sapo corre **para a água**; ave **levanta voo**. O jogador continua
+  sendo tratado como ameaça pelas presas.
+- **Bebida**: só o sapo nada (`swim`); coelho/ave/cobra bebem em `eat`
+  (evita "coelho nadando" no render).
+- **Percepção**: a vizinhança (chunk + 8 vizinhos) é montada **uma vez por
+  frame** e cada animal só filtra por raio — antes cada animal varria o mapa.
+
+### Desempenho (medido)
+| alvo | ms/frame |
+| --- | --- |
+| desktop (49 chunks) | **0,88** |
+| mobile (25 chunks) | **0,53** |
+
+### Ciclo diário observado no mundo (seed 1337)
+| hora | cobra (ativ.) | sapo (ativ.) | coelho (ativ.) |
+| --- | --- | --- | --- |
+| 05h | rest/idle (0,81) | idle/swim/eat (0,46) | idle/flee (0,34) |
+| 09h | **sleep 9/9** (0,24) | sleep/swim (0,12) | idle/wander (0,78) |
+| 13h | **sleep 8/9** (0,22) | swim (0,12) | idle/eat (0,88) |
+| 19h | idle/chase (1,00) | swim/flee (0,79) | idle/wander (0,44) |
+| 23h | rest/seek_water (0,49) | seek_food/swim (0,91) | idle/eat (0,12) |
 
 ## 7. Limitações
 

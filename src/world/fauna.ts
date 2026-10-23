@@ -211,6 +211,12 @@ export interface Animal {
   chaseHours?: number;
   /** 0..1 — medo (sobe com ameaça, cai com o tempo) */
   fear?: number;
+  /** horas de jogo restantes até poder dar outro bote */
+  strikeCooldown?: number;
+  /** evita aplicar dano duas vezes no mesmo bote */
+  struckThisLunge?: boolean;
+  /** 0..1 atividade do horário (curva da espécie), atualizada a cada passo */
+  activity?: number;
 }
 
 /** cria um agente com todos os campos (usado no spawn e em testes/tools) */
@@ -232,6 +238,8 @@ export function makeAnimal(partial: Pick<Animal, 'id' | 'kind' | 'chunk' | 'x' |
     tx: partial.x,
     ty: partial.y,
     hover: 0,
+    strikeCooldown: 0,
+    struckThisLunge: false,
     quirk,
     ...partial,
   };
@@ -292,10 +300,58 @@ export const FAUNA_TRAITS: Record<FaunaKind, FaunaTraits> = {
 /** tetos por chunk (mobile-first) */
 export const FAUNA_CAP: Record<FaunaKind, number> = { rabbit: 3, frog: 3, bird: 2, snake: 1 };
 
+/**
+ * Curva de atividade 0..1 por espécie e hora do dia (0..24).
+ *
+ * Não é "de dia acorda / de noite dorme": cada espécie tem o seu pico, o que
+ * muda velocidade, disposição para caçar/comer e chance de ficar escondida.
+ * Crepúsculo usa uma rampa suave (sem degrau em 6 h / 19 h).
+ */
+export function activityAt(kind: FaunaKind, hour: number): number {
+  const t = ((hour % 24) + 24) % 24;
+  // janelas em forma de "sino" (cosseno) para cada rotina
+  const bell = (center: number, width: number): number => {
+    let d = Math.abs(t - center);
+    if (d > 12) d = 24 - d; // distância circular
+    return clamp(1 - d / width, 0, 1);
+  };
+  switch (kind) {
+    case 'rabbit': {
+      // manhã e tarde altas, noite baixa (mas não zero: coelho sai para comer)
+      const day = bell(10, 7) * 0.9 + bell(16, 6) * 0.75;
+      return clamp(0.12 + day * 0.85, 0.08, 1);
+    }
+    case 'bird': {
+      // pico no amanhecer, alto de tarde, quase nulo à noite
+      const morning = bell(7, 4) * 1.0;
+      const afternoon = bell(15, 7) * 0.8;
+      return clamp(0.05 + Math.max(morning, afternoon) * 0.95, 0.02, 1);
+    }
+    case 'frog': {
+      // baixo de dia, alto no crepúsculo, altíssimo à noite
+      const dusk = bell(18.5, 4) * 0.85;
+      const night = bell(0, 8) * 1.0;
+      return clamp(0.12 + Math.max(dusk, night) * 0.9, 0.08, 1);
+    }
+    case 'snake': {
+      // caça no crepúsculo/amanhecer; moderada à noite; descansa no meio do dia
+      const dawn = bell(6, 3.5) * 1.0;
+      const dusk = bell(19, 4) * 1.0;
+      const night = bell(1, 7) * 0.55;
+      const midDay = bell(13, 3) * 0.12;
+      return clamp(0.10 + Math.max(dawn, dusk, night, midDay), 0.06, 1);
+    }
+  }
+}
+
 /** memória curta: horas de jogo até a lembrança de presa/ameaça expirar */
 export const MEMORY_HOURS = 1.2;
 /** tempo máximo de perseguição antes de desistir (h de jogo) */
 export const MAX_CHASE_HOURS = 1.5;
+/** janela do bote (h de jogo): o estado 'attack' dura isto, um bote só */
+export const STRIKE_WINDOW_HOURS = 0.08;
+/** descanso entre botes (h de jogo) — um ataque por bote, nunca por tick */
+export const ATTACK_COOLDOWN_HOURS = 0.22;
 
 const CELL_PX_STD = 64;
 
@@ -742,13 +798,23 @@ function freshMemory(animal: Animal, hour: number): Animal['memory'] {
  *   sobrevivência (fuga) > sede extrema > fome > caça (predador) > descanso >
  *   exploração. A personalidade (`quirk`) ajusta limiares e distâncias.
  */
-export function decide(animal: Animal, cfg: WorldConfig, opts: FaunaStepOptions, percept: Perception): void {
+export function decide(
+  animal: Animal,
+  cfg: WorldConfig,
+  opts: FaunaStepOptions,
+  percept: Perception,
+  /** horas de jogo decorridas neste passo (nunca uma constante de FPS) */
+  dtHours = 0,
+): void {
   const traits = FAUNA_TRAITS[animal.kind];
   const hour = opts.hour + opts.worldDay * 24;
   const fear = animal.fear ?? 0;
   // quirk: 0 = cauteloso, 1 = ousado/explorador
   const boldness = animal.quirk;
-  const threatRange = 90 + animal.quirk * 45;
+  // cautela por espécie: coelho foge de longe, sapo foge para a água,
+  // ave levanta voo. O quirk individual ajusta o limiar.
+  const caution = traits.prey ? 0.6 : animal.kind === 'rabbit' ? 1.45 : animal.kind === 'frog' ? 1.0 : 1.2;
+  const threatRange = (70 + animal.quirk * 45) * caution;
 
   // --- 1. sobrevivência: ameaça perto → foge (mesmo com fome) -------------
   if (percept.threat && percept.threatDist < threatRange) {
@@ -758,10 +824,35 @@ export function decide(animal: Animal, cfg: WorldConfig, opts: FaunaStepOptions,
       const dx = animal.x - percept.threat.x;
       const dy = animal.y - percept.threat.y;
       const d = Math.hypot(dx, dy) || 1;
-      tx = clamp(animal.x + (dx / d) * 70, animal.chunk.cx * animal.chunk.n * cellPxOf(cfg), (animal.chunk.cx + 1) * animal.chunk.n * cellPxOf(cfg));
-      ty = clamp(animal.y + (dy / d) * 70, animal.chunk.cy * animal.chunk.n * cellPxOf(cfg), (animal.chunk.cy + 1) * animal.chunk.n * cellPxOf(cfg));
+      const cellPx = cellPxOf(cfg);
+      const minX = animal.chunk.cx * animal.chunk.n * cellPx;
+      const maxX = (animal.chunk.cx + 1) * animal.chunk.n * cellPx;
+      const minY = animal.chunk.cy * animal.chunk.n * cellPx;
+      const maxY = (animal.chunk.cy + 1) * animal.chunk.n * cellPx;
+      // cada espécie foge à sua maneira:
+      //  - sapo: corre para a água (ambiente seguro);
+      //  - ave: levanta voo para longe;
+      //  - coelho: corre na direção oposta com desvio lateral (zigue-zague)
+      if (animal.kind === 'frog' && percept.water && percept.waterDist < 220) {
+        tx = percept.water.x;
+        ty = percept.water.y;
+      } else {
+        const jitter = (animal.quirk - 0.5) * 0.9; // desvio lateral estável
+        const cs = Math.cos(jitter);
+        const sn = Math.sin(jitter);
+        const ox = dx * cs - dy * sn;
+        const oy = dx * sn + dy * cs;
+        tx = clamp(animal.x + (ox / d) * 70, minX, maxX);
+        ty = clamp(animal.y + (oy / d) * 70, minY, maxY);
+      }
+      animal.tx = tx;
+      animal.ty = ty;
     }
-    animal.state = 'flee';
+    if (animal.kind === 'bird' && percept.threatDist < threatRange * 0.8) {
+      animal.state = 'fly'; // ave escapa voando
+    } else {
+      animal.state = 'flee';
+    }
     animal.tx = tx;
     animal.ty = ty;
     animal.timer = 0;
@@ -794,14 +885,18 @@ export function decide(animal: Animal, cfg: WorldConfig, opts: FaunaStepOptions,
     return;
   }
 
-  // --- 3. predador: caçar quando com fome ----------------------------------
+  // --- 3. predador: caçar quando com fome e desperto ----------------------
+  // A atividade do horário entra na conta: cobra dorme no meio do dia.
+  const activity = animal.activity ?? activityAt(animal.kind, opts.hour);
   const huntHunger = 0.45 + (1 - boldness) * 0.1; // ousado caça mais cedo
-  if (traits.prey && animal.hunger > huntHunger) {
+  const canHunt = animal.hunger > huntHunger && activity > 0.25;
+  if (traits.prey && canHunt) {
     const target = percept.prey ?? preyFromMemory(animal, hour, opts);
     if (target) {
       const d = Math.hypot(target.x - animal.x, target.y - animal.y);
       remember(animal, 'prey', target, hour);
-      animal.chaseHours = (animal.chaseHours ?? 0) + 0.016;
+      // tempo REAL de perseguição (independe de FPS)
+      animal.chaseHours = (animal.chaseHours ?? 0) + Math.max(0, dtHours);
       // perseguição longa sem sucesso: desiste e descansa
       if (animal.chaseHours > MAX_CHASE_HOURS) {
         animal.chaseHours = 0;
@@ -811,12 +906,14 @@ export function decide(animal: Animal, cfg: WorldConfig, opts: FaunaStepOptions,
         animal.hunger = clamp(animal.hunger + 0.05, 0, 1); // gastou energia
         return;
       }
-      if (d <= (traits.attackRange ?? 14)) {
+      const ready = (animal.strikeCooldown ?? 0) <= 0;
+      if (d <= (traits.attackRange ?? 14) && ready) {
         animal.state = 'attack';
         animal.tx = target.x;
         animal.ty = target.y;
         animal.timer = 0;
         animal.animPhase = 0;
+        animal.struckThisLunge = false; // novo bote: pode dar um dano
       } else if (d <= (traits.huntRange ?? 150)) {
         animal.state = 'chase';
         animal.tx = target.x;
@@ -842,7 +939,8 @@ export function decide(animal: Animal, cfg: WorldConfig, opts: FaunaStepOptions,
 
   // --- 5. descanso: predador satisfeito esconde/descansa ------------------
   if (traits.prey && animal.hunger < 0.35 && animal.timer > 3) {
-    animal.state = animal.quirk > 0.5 ? 'hide' : 'rest';
+    // fora do pico de caça a cobra se esconde; no pico, só descansa
+    animal.state = activity < 0.4 ? 'hide' : animal.quirk > 0.65 ? 'hide' : 'rest';
     animal.timer = 0;
     return;
   }
@@ -921,10 +1019,17 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
       continue;
     }
 
-    // --- noite: dorme (sapo é o contrário) ---------------------------------
-    const night = opts.hour < 6 || opts.hour > 19;
-    const asleep = traits.diurnal ? night : false;
-    if (asleep && animal.state !== 'sleep') {
+    // --- ritmo diário por espécie (curva, não um "if night") --------------
+    // A atividade vem de `activityAt`: cada espécie tem seu pico e a curva
+    // influencia sono, velocidade e disposição para caçar/comer.
+    const activity = activityAt(animal.kind, opts.hour);
+    animal.activity = activity;
+    // cooldown do bote corre em horas de jogo (independe de FPS)
+    animal.strikeCooldown = Math.max(0, (animal.strikeCooldown ?? 0) - h);
+    // dorme quando a atividade da espécie está baixa e não há urgência
+    const urgent = animal.hunger > 0.75 || animal.thirst > 0.85 || (animal.fear ?? 0) > 0.3;
+    const asleep = activity < 0.22 && !urgent;
+    if (asleep && animal.state !== 'sleep' && animal.state !== 'flee' && animal.state !== 'attack') {
       animal.state = 'sleep';
       animal.timer = 0;
     }
@@ -951,7 +1056,8 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
     if (animal.thirst > 0.5 && animal.state !== 'sleep') {
       const spotHere = spotAt(chunk, cfg, animal.x, animal.y, opts.worldDay);
       if (spotHere.water > 0.02) {
-        animal.state = 'swim';
+        // só o sapo NADA; os outros bebem na margem (animação de comer/beber)
+        animal.state = animal.kind === 'frog' ? 'swim' : 'eat';
         animal.timer = 0;
         animal.thirst = clamp(animal.thirst - h * 1.6, 0, 1);
         animal.energy = clamp(animal.energy + h * 0.1, 0, 1);
@@ -982,16 +1088,19 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
     // (roda a cada passo do mundo; o movimento continua por quadro abaixo)
     const percept = perceive(animal, cfg, opts);
     animal.fear = clamp((animal.fear ?? 0) - h * 0.35, 0, 1);
-    decide(animal, cfg, opts, percept);
+    decide(animal, cfg, opts, percept, h);
 
-    // --- ataque do predador (só dentro do alcance) -------------------------
+    // --- bote do predador: UM dano por bote, com cooldown ------------------
+    // (antes o dano era aplicado a cada tick enquanto 'attack' durasse)
     if (animal.state === 'attack' && percept.prey) {
       const d = Math.hypot(percept.prey.x - animal.x, percept.prey.y - animal.y);
-      if (d <= (traits.attackRange ?? 14) + 2) {
-        // dano proporcional ao tempo REAL do passo (h de jogo → segundos)
-        const dmg = (traits.attackDamage ?? 0.5) * (h * 60) * 1.6;
-        opts.damageAnimal?.(percept.prey, dmg);
-        animal.energy = clamp(animal.energy - h * 0.05, 0, 1);
+      const inRange = d <= (traits.attackRange ?? 14) + 2;
+      if (inRange && !animal.struckThisLunge && (animal.strikeCooldown ?? 0) <= 0) {
+        animal.struckThisLunge = true;
+        animal.strikeCooldown = ATTACK_COOLDOWN_HOURS;
+        animal.energy = clamp(animal.energy - 0.04, 0, 1);
+        // dano fixo por bote (não cresce com o tempo que o estado dura)
+        opts.damageAnimal?.(percept.prey, traits.attackDamage ?? 0.5);
         if (percept.prey.health <= 0.02) {
           // abateu a presa: alimenta-se dela (o mundo remove a carcaça)
           animal.hunger = clamp(animal.hunger - 0.55, 0, 1);
@@ -1001,10 +1110,11 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
           animal.chaseHours = 0;
           animal.memory = undefined;
         }
-      } else {
+      } else if (!inRange) {
         animal.state = 'chase';
         animal.tx = percept.prey.x;
         animal.ty = percept.prey.y;
+        animal.struckThisLunge = false;
       }
     }
     if (animal.state === 'chase' && percept.prey) {
@@ -1044,10 +1154,11 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
       animal.state = 'idle';
       animal.timer = 0;
     } else if (animal.state === 'attack') {
-      // bote: curto. Depois volta a perseguir (a decisão reavalia a distância)
-      if (animal.timer > 0.35) {
+      // janela do bote: curta. Depois volta a perseguir/descansar
+      if (animal.timer > STRIKE_WINDOW_HOURS) {
         animal.state = 'chase';
         animal.timer = 0;
+        animal.struckThisLunge = false;
       }
     }
 
@@ -1066,7 +1177,9 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
         traits.speed *
         (animal.state === 'flee' ? 2.1 : animal.state === 'chase' ? 1.45 : 1) *
         lunge *
-        (0.6 + animal.energy * 0.6);
+        (0.6 + animal.energy * 0.6) *
+        // fuga não depende de atividade (adrenalina); o resto sim
+        (animal.state === 'flee' ? 1 : 0.55 + 0.45 * (animal.activity ?? 1));
       const dx = animal.tx - animal.x;
       const dy = animal.ty - animal.y;
       const dist = Math.hypot(dx, dy);
@@ -1096,7 +1209,9 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
         animal.vy = vy;
         animal.facing = vx >= 0 ? 1 : -1;
         animal.animPhase += h * (animal.state === 'flee' ? 10 : 5);
-      } else {
+      } else if (animal.state !== 'flee' && animal.state !== 'chase') {
+        // chegou ao destino de exploração/comida; fuga e perseguição só
+        // terminam pela decisão (ameaça/perda do alvo), nunca por "chegar"
         animal.state = 'idle';
         animal.timer = 0;
       }

@@ -152,6 +152,9 @@ Equilíbrio da umidade = `0,34 + 0,26·sazonal + 0,10·floresta + 0,08·água �
 | `MAX_CHASE_HOURS` | 1,5 h de jogo | tempo máximo de perseguição antes de desistir |
 | cobra | `speed 40` · `attackRange 18` · `attackDamage 0,6` · `huntRange 190` | predador de emboscada com bote |
 | cobra (bote) | 2,3× de velocidade em `chase`/`attack` | arranque curto, não é "míssil" |
+| `STRIKE_WINDOW_HOURS` | 0,08 h | duração do estado `attack` (um bote) |
+| `ATTACK_COOLDOWN_HOURS` | 0,22 h | descanso entre botes (dano nunca por tick) |
+| `activityAt(kind, hora)` | 0..1 | curva de atividade: modula sono, velocidade e caça |
 
 ## Personagem / natação (`src/game/player.ts`)
 
