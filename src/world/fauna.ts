@@ -217,6 +217,17 @@ export interface Animal {
   struckThisLunge?: boolean;
   /** 0..1 atividade do horário (curva da espécie), atualizada a cada passo */
   activity?: number;
+  /**
+   * horas de jogo restantes de reação à dor. Não é um estado novo: enquanto
+   * `hurtTimer > 0` o render usa a linha de dor da espécie (cobra) ou um
+   * sobressalto curto (coelho/sapo pulam, ave bate asas) — ver `animFor`.
+   */
+  hurtTimer?: number;
+  /**
+   * idade da carcaça (h de jogo) quando `state === 'dead'`. O animal morto
+   * continua no mundo, imóvel, até `CORPSE_HOURS`, e só então vira solo.
+   */
+  corpseHours?: number;
 }
 
 /** cria um agente com todos os campos (usado no spawn e em testes/tools) */
@@ -240,6 +251,8 @@ export function makeAnimal(partial: Pick<Animal, 'id' | 'kind' | 'chunk' | 'x' |
     hover: 0,
     strikeCooldown: 0,
     struckThisLunge: false,
+    hurtTimer: 0,
+    corpseHours: 0,
     quirk,
     ...partial,
   };
@@ -352,6 +365,16 @@ export const MAX_CHASE_HOURS = 1.5;
 export const STRIKE_WINDOW_HOURS = 0.08;
 /** descanso entre botes (h de jogo) — um ataque por bote, nunca por tick */
 export const ATTACK_COOLDOWN_HOURS = 0.22;
+/** duração da reação de dor (h de jogo) — animação/flash curto, não um estado */
+export const HURT_HOURS = 0.05;
+/**
+ * Quanto tempo a carcaça permanece no mundo (h de jogo). 1 h de jogo = 60 s
+ * reais, então o corpo fica ~1 min visível: dá tempo de ver que o animal parou
+ * de se mover e começa a se decompor, sem virar lixo permanente no chunk.
+ */
+export const CORPSE_HOURS = 1.0;
+/** a partir daqui a carcaça já está em decomposição (restos → solo) */
+export const CORPSE_DECAY_HOURS = 0.45;
 
 const CELL_PX_STD = 64;
 
@@ -530,8 +553,26 @@ export interface FaunaStepOptions {
   damageAnimal?: (prey: Animal, amount: number) => void;
 }
 
-/** mapeia estado → animação disponível no spritesheet da espécie */
-export function animFor(kind: FaunaKind, state: FaunaState, moving: boolean, inWater: boolean): FaunaAnim {
+/**
+ * Mapeia estado → animação disponível no spritesheet da espécie.
+ *
+ * Regra: NUNCA inventar quadro. Se a folha não tem uma animação específica
+ * (peek/approach/retreat da cobra, morte do coelho/sapo/ave), o comportamento
+ * usa a linha existente mais próxima — a IA continua a mesma.
+ *
+ * `hurt` é um sinal curto (`hurtTimer`), não um estado: a dor não interrompe a
+ * decisão, só troca a pose por alguns segundos.
+ */
+export function animFor(
+  kind: FaunaKind,
+  state: FaunaState,
+  moving: boolean,
+  inWater: boolean,
+  hurt = false,
+): FaunaAnim {
+  // dor: sinal curto de reação (não é estado). A cobra tem linha própria;
+  // coelho/sapo dão um sobressalto e a ave bate asas — animações que existem.
+  if (hurt) return kind === 'snake' ? 'hurt' : kind === 'bird' ? 'fly' : 'jump';
   if (kind === 'snake') {
     // só as animações que existem na folha fornecida (idle/move/attack/hide/
     // hurt/death/sleep) — nunca inventar frame
@@ -545,17 +586,23 @@ export function animFor(kind: FaunaKind, state: FaunaState, moving: boolean, inW
         return 'hide';
       case 'sleep':
         return 'sleep';
+      case 'hunt':
+        // emboscada: parada na toca = enrolada (hide); deslocando = move
+        return moving ? 'move' : 'hide';
       case 'flee':
       case 'wander':
       case 'seek_food':
       case 'seek_water':
-      case 'hunt':
       case 'chase':
         return moving ? 'move' : 'idle';
       default:
         return 'idle';
     }
   }
+  // morto: as folhas de coelho/sapo/ave não têm linha de morte; a carcaça usa
+  // a pose de repouso CONGELADA (sem quadro de respiração) e o render aplica
+  // a marca de decomposição — ver `emitAnimal`.
+  if (state === 'dead') return 'sleep';
   if (kind === 'frog') {
     if (inWater) return 'swim';
     if (state === 'eat') return 'eat';
@@ -565,6 +612,7 @@ export function animFor(kind: FaunaKind, state: FaunaState, moving: boolean, inW
   }
   if (kind === 'bird') {
     if (state === 'fly') return 'fly';
+    if (state === 'flee') return 'fly'; // ave ameaçada levanta voo
     if (state === 'land') return 'land';
     if (state === 'eat') return 'eat';
     if (state === 'sleep' || state === 'rest') return 'sleep';
@@ -816,6 +864,11 @@ export function decide(
   const caution = traits.prey ? 0.6 : animal.kind === 'rabbit' ? 1.45 : animal.kind === 'frog' ? 1.0 : 1.2;
   const threatRange = (70 + animal.quirk * 45) * caution;
 
+  // --- 0. janela do bote: a decisão não atropela a animação de ataque ------
+  // Sem isso o 'attack' durava um único passo e a pose nunca aparecia.
+  // O recuo já foi definido no momento do dano (ver `stepFauna`).
+  if (animal.state === 'attack' && animal.timer < STRIKE_WINDOW_HOURS) return;
+
   // --- 1. sobrevivência: ameaça perto → foge (mesmo com fome) -------------
   if (percept.threat && percept.threatDist < threatRange) {
     let tx = animal.x;
@@ -914,6 +967,11 @@ export function decide(
         animal.timer = 0;
         animal.animPhase = 0;
         animal.struckThisLunge = false; // novo bote: pode dar um dano
+      } else if (d <= (traits.attackRange ?? 14) * 2.4 && !ready) {
+        // cooldown RECÉM-USADO: fica parada observando (pose enrolada/idle),
+        // em vez de colar na presa — é o "recuo → cooldown" visível da cobra
+        animal.state = 'idle';
+        animal.timer = 0;
       } else if (d <= (traits.huntRange ?? 150)) {
         animal.state = 'chase';
         animal.tx = target.x;
@@ -990,6 +1048,16 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
   const dtSec = clamp(h * 60, 0, 0.5);
   const cellPx = cellPxOf(cfg);
   for (const animal of animals) {
+    // --- carcaça: não anda, não come, não decide; só envelhece ------------
+    // O mundo remove o corpo quando `corpseHours >= CORPSE_HOURS` (vira solo).
+    if (animal.state === 'dead') {
+      animal.corpseHours = (animal.corpseHours ?? 0) + h;
+      animal.hurtTimer = 0;
+      animal.vx = 0;
+      animal.vy = 0;
+      continue;
+    }
+    animal.hurtTimer = Math.max(0, (animal.hurtTimer ?? 0) - h);
     const traits = FAUNA_TRAITS[animal.kind];
     const chunk = animal.chunk;
     animal.timer += h;
@@ -1005,16 +1073,22 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
     if (strain > 0) animal.health = clamp(animal.health - h * strain * 0.05, 0, 1);
     else animal.health = clamp(animal.health + h * 0.01, 0, 1);
     if (animal.health <= 0.02) {
-      // morte: devolve matéria orgânica ao solo (nunca "desaparece")
+      // morte: vira CARCAÇA imóvel (visual) e devolve matéria orgânica.
+      // O mundo mantém o corpo por CORPSE_HOURS e depois o transforma em solo.
       const cellPx = cellPxOf(cfg);
       const i = animal.chunk.cellIdx(
         clamp(Math.floor(animal.x / cellPx) - animal.chunk.cx * animal.chunk.n, 0, animal.chunk.n - 1),
         clamp(Math.floor(animal.y / cellPx) - animal.chunk.cy * animal.chunk.n, 0, animal.chunk.n - 1),
       );
-      animal.chunk.litter[i] = Math.min(16, animal.chunk.litter[i] + 1.2);
-      animal.chunk.coarse[i] = Math.min(6, animal.chunk.coarse[i] + 0.6);
-      animal.chunk.nAvail[i] += 0.06;
+      animal.chunk.litter[i] = Math.min(16, animal.chunk.litter[i] + 0.7);
+      animal.chunk.coarse[i] = Math.min(6, animal.chunk.coarse[i] + 0.35);
+      animal.chunk.nAvail[i] += 0.03;
       animal.chunk.soilDirty = true;
+      animal.state = 'dead';
+      animal.corpseHours = 0;
+      animal.timer = 0;
+      animal.vx = 0;
+      animal.vy = 0;
       opts.onDeath?.(animal);
       continue;
     }
@@ -1099,6 +1173,14 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
         animal.struckThisLunge = true;
         animal.strikeCooldown = ATTACK_COOLDOWN_HOURS;
         animal.energy = clamp(animal.energy - 0.04, 0, 1);
+        // recuo do bote: a cobra se afasta alguns px da presa e observa.
+        // Continua no estado 'attack' (animação attack) até a janela fechar —
+        // o recuo é só o alvo do movimento, não um estado novo.
+        const bx = animal.x - percept.prey.x;
+        const by = animal.y - percept.prey.y;
+        const bd = Math.hypot(bx, by) || 1;
+        animal.tx = animal.x + (bx / bd) * 18;
+        animal.ty = animal.y + (by / bd) * 13;
         // dano fixo por bote (não cresce com o tempo que o estado dura)
         opts.damageAnimal?.(percept.prey, traits.attackDamage ?? 0.5);
         if (percept.prey.health <= 0.02) {
@@ -1169,6 +1251,8 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
       animal.state === 'seek_water' ||
       animal.state === 'flee' ||
       animal.state === 'chase' ||
+      // durante o bote o alvo é o RECUO: a cobra dá o golpe e volta alguns px
+      animal.state === 'attack' ||
       animal.state === 'hunt';
     if (moving) {
       // cobra em perseguição faz o "bote": arranque curto e limitado
@@ -1207,7 +1291,9 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
         }
         animal.vx = vx;
         animal.vy = vy;
-        animal.facing = vx >= 0 ? 1 : -1;
+        // top-down: só vira o sprite quando o deslocamento é sobretudo
+        // horizontal — subir/descer mantém a última direção (nada de piscar)
+        if (Math.abs(vx) > 8) animal.facing = vx >= 0 ? 1 : -1;
         animal.animPhase += h * (animal.state === 'flee' ? 10 : 5);
       } else if (animal.state !== 'flee' && animal.state !== 'chase') {
         // chegou ao destino de exploração/comida; fuga e perseguição só
@@ -1250,6 +1336,9 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
           animal.state = 'idle';
           animal.timer = 0;
         }
+      } else if (animal.state === 'flee') {
+        // ave ameaçada: decola baixo (asas) — o hover já existente dá a altura
+        animal.hover = 5 + Math.sin(animal.animPhase * 0.9) * 2;
       } else {
         animal.hover = 0;
       }
@@ -1375,6 +1464,8 @@ export function applyPredationDamage(prey: Animal, amount: number, attacker?: An
   if (!(amount > 0)) return;
   prey.health = clamp(prey.health - Math.max(0, amount), 0, 1);
   prey.fear = clamp((prey.fear ?? 0) + 0.5, 0, 1);
+  // reação de dor: pose/flash curto (não é estado — a decisão continua)
+  prey.hurtTimer = HURT_HOURS;
   prey.state = 'flee';
   prey.timer = 0;
   if (attacker) {
@@ -1405,7 +1496,16 @@ export function agentView(animal: Animal, timeMs: number, framesFor: (a: FaunaAn
     )
   ] ?? 0 };
   const moving = Math.hypot(animal.vx, animal.vy) > 1;
-  const anim = animFor(animal.kind, animal.state, moving, spot.water > 0.25);
+  const hurt = (animal.hurtTimer ?? 0) > 0;
+  const anim = animFor(animal.kind, animal.state, moving, spot.water > 0.25, hurt);
+  const frames = framesFor(anim);
+  let frame = animFrame(animal, anim, frames, timeMs);
+  if (animal.state === 'dead') {
+    // carcaça: a cobra tem linha de morte (colapsa e congela no último quadro);
+    // as outras folhas congelam na pose de repouso — nada de respirar/andar.
+    const secs = (animal.corpseHours ?? 0) * 60;
+    frame = animal.kind === 'snake' ? Math.min(Math.max(0, frames - 1), Math.floor(secs / 0.1)) : 0;
+  }
   return {
     id: animal.id,
     kind: animal.kind,
@@ -1413,9 +1513,9 @@ export function agentView(animal: Animal, timeMs: number, framesFor: (a: FaunaAn
     y: animal.y,
     state: animal.state,
     anim,
-    frame: animFrame(animal, anim, framesFor(anim), timeMs),
+    frame,
     facing: animal.facing,
-    hover: animal.hover,
+    hover: animal.state === 'dead' ? 0 : animal.hover,
     scale: 1,
     detailed: true,
   };

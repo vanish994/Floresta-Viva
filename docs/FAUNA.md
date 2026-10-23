@@ -208,27 +208,136 @@ A atividade modula **sono** (dorme abaixo de 0,22, salvo fome/sede/perigo),
 | 19h | idle/chase (1,00) | swim/flee (0,79) | idle/wander (0,44) |
 | 23h | rest/seek_water (0,49) | seek_food/swim (0,91) | idle/eat (0,12) |
 
+## 6.3 Camada visual: estado da IA → animação → sprite (atualização)
+
+O objetivo desta etapa foi **tornar visível o que a IA já decidia**, sem criar
+uma segunda arquitetura de fauna, outro renderer, outro manifesto ou assets
+novos. A cadeia continua sendo:
+
+`IA existente → estado existente → animação da folha → emitAnimal → cena → Canvas`
+
+### Mapa estado → animação (fonte única: `animFor` + `faunaFrameCount`)
+
+| estado da IA | coelho | sapo | ave | cobra |
+| --- | --- | --- | --- | --- |
+| `idle` / `rest` | idle / sleep | idle | idle | idle / hide |
+| `wander` / `seek_food` / `seek_water` | walk (parado = idle) | jump (parado = idle) | idle | move (parado = idle) |
+| `eat` | eat | eat | eat | — |
+| `sleep` | sleep | sleep | sleep | sleep |
+| `flee` | **run** + poeira | **jump** (ou `swim` na água) | **fly** + sombra alta | move |
+| `swim` | — | swim + ondulação | — | — |
+| `fly` / `land` | — | — | fly / land | — |
+| `hunt` | — | — | — | **hide** (emboscada enrolada) ou move |
+| `chase` | — | — | — | **move** (aproximação) |
+| `attack` | — | — | — | **attack** + brilho no focinho |
+| dor (`hurtTimer`) | jump (sobressalto) | jump | fly | **hurt** |
+| `dead` | sleep **congelado** (carcaça) | idem | idem | **death** (colapsa e congela) |
+
+Regras aplicadas:
+
+- **Nada inventado**: se a folha não tem `peek/approach/retreat/strike`, o
+  comportamento usa `hide` / `move` / `attack` (as poses da folha da cobra);
+  se a folha não tem linha de morte (coelho/sapo/ave), a carcaça usa a pose de
+  repouso **congelada** (sem quadro de respiração) + marca de decomposição.
+- **Uma tabela de frames**: `FAUNA_FRAMES`/`faunaFrameCount` no manifesto é a
+  única contagem. `scene.ts` não mantém mais uma cópia (antes havia duas).
+- **Top-down**: só `flip` horizontal, escolhido pelo sinal do deslocamento
+  horizontal; subir/descer **não** inverte o sprite. Animais não são vistos de
+  lado "andando na horizontal": seguem o vetor real de movimento.
+- **Escala nativa**: 1:1 (coelho 21×17, sapo 27×15, ave 19×14, cobra 41×20);
+  nada é esticado para preencher o tile de 32 px. O ponto de contato é a base
+  do sprite (âncora no chão) e a sombra fica **abaixo** do animal.
+
+### Feedback visual por estado (`emitAnimal`)
+
+| situação | leitura no jogo | custo |
+| --- | --- | --- |
+| fuga (coelho/sapo correndo) | 2 pixels de poeira atrás do corpo | 2 `fill` |
+| sapo nadando | linha d'água sobre o corpo + 2 ondulações | 3 `fill` |
+| ave voando/fugindo | sombra menor e mais clara, separada do corpo | 1 `fill` |
+| dormindo | dois "z" de 3 traços piscando acima da cabeça | 6 `fill` |
+| ferido | pose de dor (cobra) / sobressalto + 2 faíscas vermelhas | 2 `fill` |
+| bote da cobra | brilho no focinho durante `attack` | 1 `fill` |
+| carcaça | sem sombra, mancha no chão que cresce, restos escuros e 2 "moscas" | 4 `fill` |
+| longe da câmera (> 420 px) | quadro estático 0, sem sombra nem efeitos (LOD) | 0 |
+
+### Correções de simulação que a leitura visual exigiu
+
+- **A janela do bote agora dura o que foi definido**: `decide()` não
+  sobrescreve mais `attack` no passo seguinte — antes a pose aparecia por um
+  único frame. O recuo do bote usa o **próprio** movimento de `attack` (alvo
+  afastado da presa), sem estado novo.
+- **Cooldown visível**: com o bote em descanso perto da presa, a cobra fica em
+  `idle` (observando) em vez de colar na presa; depois volta a perseguir.
+- **Ave em fuga levanta voo** (`flee` → `fly`) com altura baixa (`hover`), em
+  vez de "correr" com sprite de voo.
+- **Sapo só nada na água**; coelho/ave/cobra bebem em `eat`.
+- **Morte é visível**: o corpo **não desaparece** no instante da morte. Ele fica
+  imóvel como carcaça (`state = 'dead'`, `corpseHours`) por `CORPSE_HOURS` e
+  depois vira solo (liteira + nutrientes). Carcaça não conta para o teto
+  populacional nem serve de presa.
+
+### Parâmetros novos
+
+| constante | valor | efeito |
+| --- | --- | --- |
+| `HURT_HOURS` | 0,05 h (~3 s reais) | duração da pose/flash de dor |
+| `CORPSE_HOURS` | 1,0 h (~60 s reais) | tempo que a carcaça permanece no mundo |
+| `CORPSE_DECAY_HOURS` | 0,45 h | a partir daqui aparecem restos/moscas |
+
+### Desempenho medido (mesmo harness nas duas versões)
+
+40 animais + 114 insetos, câmera 480×320, 240 quadros, seed 1337:
+
+| alvo | antes (2a046ce) | depois | ops/frame |
+| --- | --- | --- | --- |
+| mobile (25 chunks) | 2,30 ms | **2,27 ms** | 1.373 → **1.414** (+3%) |
+| desktop (49 chunks) | 2,11 ms | **1,91 ms** | 1.373 → **1.414** (+3%) |
+
+Os efeitos só existem para animais a menos de 420 px do centro da câmera e para
+estados específicos; o custo medido está dentro do ruído do harness.
+
+### Ensaio visual (headless, ops reais)
+
+`npm run visual:fauna` gera [`docs/imagens/fauna.png`](imagens/fauna.png) (e o
+`fauna_zoom.png` em 4×) com 21 animais em duas faixas: caminhada, fuga, comer,
+voo, perseguição, emboscada, sono com "z", bote com brilho, dor da cobra e três
+carcaças em estágios diferentes. As ops são exatamente as do jogo — a validação
+é por imagem renderizada, **não** por navegador real (não há automação de
+navegador no projeto).
+
 ## 7. Limitações
 
 1. Sem pathfinding: os animais escolhem um alvo local e andam em linha reta com
    colisão leve; podem "esbarrar" em árvores sem contornar.
 2. A fauna não é persistida: ao recarregar, é reconstruída pela seed/habitat
    (mesmos animais, mas fome/energia reiniciam).
-3. Comida é abstrata: comer reduz `hunger` e usa frutos no chão como atração,
-   mas os frutos **não são consumidos** do chão (o ecossistema é o dono deles).
-4. Não há reprodução, predação nem morte de animais.
+3. Comida é **consumida de verdade** (inseto sai do pool, fruto sai do chão),
+   mas a forragem do coelho é só um campo de célula (`forage`), sem sprite
+   individual de grama sendo comida.
+4. Há predação e morte (carcaça → solo), mas **não há reprodução** com herança:
+   o nascimento usa `seedFauna` + teto por chunk, não genética.
 5. A prancha é raster suave; a conversão para pixel art é uma redução fiel, não
    uma re-ditagem pixel a pixel — detalhes finos (olhos, penas) foram
    preservados em 1–2 px.
 6. Coelho e ave não atravessam chunk: ficam contidos na área do chunk dono
    (a travessia com transferência de dono existe para insetos; para a fauna
    ficou como evolução futura para não duplicar donos).
+7. **Sprites de morte/dor**: só a cobra tem linhas `hurt`/`death`. Coelho, sapo
+   e ave não têm esses quadros na prancha processada; a morte usa a pose de
+   repouso congelada + decomposição (e a dor usa `jump`/`fly`). A prancha nova
+   desta etapa (`tools/data/fauna-vida-reference.png`) tem poses de `hurt`/
+   `death` para as três espécies, mas o recorte é suave e irregular — foi
+   mantido **fora** do pipeline para não substituir sprites bons por um
+   recorte pior. Extrair essas poses exige uma passada dedicada de re-extração.
+8. Sem sprites de 4 direções: o jogo usa `flip` horizontal (a prancha só tem
+   perfil). Subir/descer mantém a direção anterior; não há sprite "de costas".
 
 ## 8. Como reproduzir
 
 ```bash
 npm run sprites:fauna   # regenera assets/Animals/*.png a partir da prancha
 npm run visual:fauna    # cena headless (escala/recorte)
-npm test                # 118 testes
+npm test                # 192 testes
 npm run build
 ```

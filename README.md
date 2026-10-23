@@ -14,7 +14,7 @@ decomposição, erosão, clima, estações) evoluem em frequências separadas do
 ```bash
 npm install
 npm run dev          # abre o jogo (Vite em 0.0.0.0:5173)
-npm test             # 179 testes (determinismo, continuidade, hidrologia, água, erosão, natação, ecossistema, tempo, chunks, persistência)
+npm test             # 192 testes (determinismo, continuidade, hidrologia, água, erosão, natação, ecossistema, tempo, chunks, persistência)
 npm run preview:world  # validação visual headless: renderiza PNGs reais + mapas de campos
 npm run scenario:water # cenário reproduzível da física da água (volumes + orçamento)
 npm run scenario:erosion # cenário reproduzível de erosão/sedimentação/margens
@@ -124,7 +124,10 @@ O jogo é jogável no celular (toque), não só no desktop:
   presa/predador,
   com estados idle/wander/seek/eat/flee/rest/sleep, fuga do jogador, hábitos
   diurno/noturno e sprites extraídos da prancha fornecida em pixel art 1:1
-  (coelho 21×17, sapo 27×15, ave 19×14). Ver [`docs/FAUNA.md`](docs/FAUNA.md).
+  (coelho 21×17, sapo 27×15, ave 19×14). Os estados da IA têm leitura visual
+  própria: fuga com poeira, natação com ondulação, sono com "z", dor com
+  faísca, bote com brilho e **carcaça imóvel que se decompõe no chão**; render
+  com LOD para o resto da tela. Ver [`docs/FAUNA.md`](docs/FAUNA.md).
 - **Fauna abstrata**: modelo de atividade (alimento/água/abrigo/hora/estação) que já alimenta a
   dispersão de sementes; interfaces `FaunaAgent`/`FaunaSystem` para agentes visuais futuros.
 - **Persistência** versionada em `localStorage` com diffs (plantas removidas/recrutadas,

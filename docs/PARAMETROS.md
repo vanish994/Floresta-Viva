@@ -155,6 +155,20 @@ Equilíbrio da umidade = `0,34 + 0,26·sazonal + 0,10·floresta + 0,08·água �
 | `STRIKE_WINDOW_HOURS` | 0,08 h | duração do estado `attack` (um bote) |
 | `ATTACK_COOLDOWN_HOURS` | 0,22 h | descanso entre botes (dano nunca por tick) |
 | `activityAt(kind, hora)` | 0..1 | curva de atividade: modula sono, velocidade e caça |
+| `HURT_HOURS` | 0,05 h (~3 s reais) | reação de dor (pose/flash curto, não é estado) |
+| `CORPSE_HOURS` | 1,0 h (~60 s reais) | carcaça imóvel no mundo antes de virar solo |
+| `CORPSE_DECAY_HOURS` | 0,45 h | início da decomposição visível (restos/moscas) |
+
+### Camada visual da fauna (`src/render/scene.ts`)
+
+| item | valor | efeito |
+| --- | --- | --- |
+| escala | 1:1 (célula nativa) | coelho 21×17, sapo 27×15, ave 19×14, cobra 41×20 |
+| âncora | base do sprite | ponto de contato no chão; sombra logo abaixo |
+| direção | `flip` horizontal | escolhido pelo sinal de `vx`; Y não inverte o sprite |
+| LOD | 420 px do centro da câmera | perto: efeitos + quadro animado; longe: quadro 0, sem sombra |
+| efeitos | 1–6 `fill` por animal | poeira da fuga, ondulação da natação, "z" do sono, faísca de dor, brilho do bote, restos da carcaça |
+| contagem de frames | `faunaFrameCount` (manifesto) | fonte única — `scene.ts` não duplica a tabela |
 
 ## Personagem / natação (`src/game/player.ts`)
 

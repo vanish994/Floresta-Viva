@@ -139,33 +139,46 @@ export const FAUNA_SHEETS: Record<'rabbit' | 'frog' | 'bird' | 'snake', FaunaShe
   },
 };
 
-/** recorte de um quadro da fauna (linha da animação × coluna do frame) */
-export function faunaRect(sheet: FaunaSheet, anim: string, frame: number): Rect {
-  const row = sheet.rows[anim] ?? 0;
-  const count = sheet.rows[anim] !== undefined
-    ? Math.max(1, Math.min(sheet.maxFrames, countFor(sheet, anim)))
-    : 1;
-  const col = ((frame % count) + count) % count;
-  return [col * sheet.cellW, row * sheet.cellH, sheet.cellW, sheet.cellH];
-}
-
-/** nº de frames de uma animação (mantido fora do JSON para ficar tipado) */
-const FAUNA_FRAMES: Record<string, Record<string, number>> = {
+/**
+ * nº de frames de cada animação (mantido fora do JSON para ficar tipado).
+ * É a ÚNICA tabela de contagem: `faunaRect` e o render (`scene.ts`) leem daqui,
+ * então uma animação nova nunca fica com duas contagens diferentes.
+ */
+export const FAUNA_FRAMES: Record<keyof typeof FAUNA_SHEETS, Record<string, number>> = {
   rabbit: { idle: 6, walk: 6, run: 5, jump: 5, eat: 6, sleep: 5 },
   frog: { idle: 4, jump: 4, swim: 5, eat: 4, sleep: 4 },
   bird: { idle: 5, fly: 4, land: 4, eat: 4, sleep: 4 },
   snake: { idle: 11, move: 11, attack: 8, hide: 9, death: 7, hurt: 7, sleep: 8 },
 };
 
-function countFor(sheet: FaunaSheet, anim: string): number {
-  const key = sheet.file.includes('rabbit')
-    ? 'rabbit'
-    : sheet.file.includes('frog')
-      ? 'frog'
-      : sheet.file.includes('snake')
-        ? 'snake'
-        : 'bird';
-  return FAUNA_FRAMES[key]?.[anim] ?? sheet.maxFrames;
+/** espécie dona de uma folha (o manifesto nunca duplica essa informação) */
+export function faunaKindOf(sheet: FaunaSheet): keyof typeof FAUNA_SHEETS {
+  for (const [kind, s] of Object.entries(FAUNA_SHEETS)) if (s === sheet) return kind as keyof typeof FAUNA_SHEETS;
+  // folhas clonadas/importadas: cai no nome do arquivo
+  if (sheet.file.includes('rabbit')) return 'rabbit';
+  if (sheet.file.includes('frog')) return 'frog';
+  if (sheet.file.includes('snake')) return 'snake';
+  return 'bird';
+}
+
+/** nº de frames válido de uma animação (1 se a linha não existir) */
+export function faunaFrameCount(kind: keyof typeof FAUNA_SHEETS, anim: string): number {
+  const sheet = FAUNA_SHEETS[kind];
+  if (!sheet || sheet.rows[anim] === undefined) return 1;
+  return Math.max(1, Math.min(sheet.maxFrames, FAUNA_FRAMES[kind]?.[anim] ?? sheet.maxFrames));
+}
+
+/** a folha da espécie tem essa linha de animação? (nunca inventar frame) */
+export function faunaHasAnim(kind: keyof typeof FAUNA_SHEETS, anim: string): boolean {
+  return FAUNA_SHEETS[kind]?.rows[anim] !== undefined;
+}
+
+/** recorte de um quadro da fauna (linha da animação × coluna do frame) */
+export function faunaRect(sheet: FaunaSheet, anim: string, frame: number): Rect {
+  const row = sheet.rows[anim] ?? 0;
+  const count = sheet.rows[anim] !== undefined ? faunaFrameCount(faunaKindOf(sheet), anim) : 1;
+  const col = ((frame % count) + count) % count;
+  return [col * sheet.cellW, row * sheet.cellH, sheet.cellW, sheet.cellH];
 }
 
 export const SPRITES: Record<string, SpriteDef> = {
