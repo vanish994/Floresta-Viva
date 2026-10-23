@@ -134,11 +134,26 @@ if (isSmallScreen()) {
 window.addEventListener('beforeunload', () => saveWorld(world));
 
 const assetBase = './';
-const spriteTotal = allAssetFiles().length;
-renderer.load(allAssetFiles(), assetBase).then(() => {
+const spriteFiles = allAssetFiles();
+const spriteTotal = spriteFiles.length;
+let gameStarted = false;
+function startGameAfterAssetLoad(timedOut = false) {
+  if (gameStarted) return;
+  gameStarted = true;
   el('loading').style.display = 'none';
-  if (renderer.failedFiles.length > 0) showSpriteError(renderer.failedFiles.length);
+  if (timedOut) showSpriteError(Math.max(1, spriteTotal - renderer.loadedCount));
+  else if (renderer.failedFiles.length > 0) showSpriteError(renderer.failedFiles.length);
   requestAnimationFrame(loop);
+}
+// Failsafe global: even if a browser never emits image load/error events,
+// the loading overlay cannot permanently block the game.
+const startupWatchdog = window.setTimeout(() => startGameAfterAssetLoad(true), 15000);
+renderer.load(spriteFiles, assetBase).then(() => {
+  window.clearTimeout(startupWatchdog);
+  startGameAfterAssetLoad();
+}).catch(() => {
+  window.clearTimeout(startupWatchdog);
+  startGameAfterAssetLoad(true);
 });
 
 function showSpriteError(n: number) {
