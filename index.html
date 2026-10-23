@@ -11,6 +11,48 @@
   <body>
     <canvas id="game"></canvas>
     <div id="loading">carregando a floresta…</div>
+    <script>
+      // Proteção independente do módulo do jogo: se um import falhar antes de
+      // src/main.ts iniciar, a tela de loading não pode ficar por cima para sempre.
+      (function () {
+        var timer = setTimeout(function () {
+          var loading = document.getElementById('loading');
+          if (loading && loading.style.display !== 'none') {
+            loading.style.display = 'none';
+            var box = document.getElementById('startup-error');
+            if (!box) {
+              box = document.createElement('div');
+              box.id = 'startup-error';
+              box.style.cssText = 'position:fixed;z-index:99999;left:8px;right:8px;top:8px;padding:12px;background:#401d18;color:#fff;border:1px solid #e08b70;border-radius:8px;font:14px system-ui;white-space:pre-wrap';
+              box.textContent = 'O jogo não conseguiu iniciar. Atualize a página; se persistir, envie uma captura desta mensagem.';
+              document.body.appendChild(box);
+            }
+          }
+        }, 20000);
+        window.addEventListener('error', function (e) {
+          var box = document.getElementById('startup-error');
+          if (!box) {
+            box = document.createElement('div');
+            box.id = 'startup-error';
+            box.style.cssText = 'position:fixed;z-index:99999;left:8px;right:8px;top:8px;padding:12px;background:#401d18;color:#fff;border:1px solid #e08b70;border-radius:8px;font:14px system-ui;white-space:pre-wrap';
+            document.body.appendChild(box);
+          }
+          box.textContent = 'Erro ao iniciar: ' + (e.message || 'falha de script') + (e.filename ? '\\n' + e.filename + ':' + e.lineno : '');
+          clearTimeout(timer);
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+          var box = document.getElementById('startup-error');
+          if (!box) {
+            box = document.createElement('div');
+            box.id = 'startup-error';
+            box.style.cssText = 'position:fixed;z-index:99999;left:8px;right:8px;top:8px;padding:12px;background:#401d18;color:#fff;border:1px solid #e08b70;border-radius:8px;font:14px system-ui;white-space:pre-wrap';
+            document.body.appendChild(box);
+          }
+          box.textContent = 'Erro ao iniciar: ' + String(e.reason || e);
+          clearTimeout(timer);
+        });
+      })();
+    </script>
     <div id="hud">
       <div class="hud-row">
         <span id="hud-time">--:--</span>
