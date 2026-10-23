@@ -35,6 +35,17 @@ describe('contrato de deploy (Pages em subpath)', () => {
     expect(r).toContain('failedFiles');
   });
 
+  it('recortes de árvore são medidos e cubrem o sprite inteiro (regressão do tronco)', () => {
+    const manifest = read('src/render/manifest.ts');
+    // o bloco é gerado por tools/gen-tree-frames.ts (união das variantes)
+    expect(manifest).toMatch(/export const TREE_RECTS = \{/);
+    expect(manifest).toContain('big: [');
+    // a média precisa ter altura de sprite inteiro (>= 80 px), não só a copa
+    const big = /big: \[\[(\d+), (\d+), (\d+), (\d+)\]/.exec(manifest);
+    expect(big).toBeTruthy();
+    expect(Number(big![4])).toBeGreaterThanOrEqual(80);
+  });
+
   it('todo sprite do manifesto existe em assets/ (e portanto no dist/)', () => {
     const manifest = read('src/render/manifest.ts');
     const files = [...manifest.matchAll(/'([A-Za-z_0-9/]+\.png)'/g)].map((m) => m[1]);

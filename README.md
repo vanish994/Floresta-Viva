@@ -14,7 +14,7 @@ decomposição, erosão, clima, estações) evoluem em frequências separadas do
 ```bash
 npm install
 npm run dev          # abre o jogo (Vite em 0.0.0.0:5173)
-npm test             # 156 testes (determinismo, continuidade, hidrologia, água, erosão, natação, ecossistema, tempo, chunks, persistência)
+npm test             # 159 testes (determinismo, continuidade, hidrologia, água, erosão, natação, ecossistema, tempo, chunks, persistência)
 npm run preview:world  # validação visual headless: renderiza PNGs reais + mapas de campos
 npm run scenario:water # cenário reproduzível da física da água (volumes + orçamento)
 npm run scenario:erosion # cenário reproduzível de erosão/sedimentação/margens

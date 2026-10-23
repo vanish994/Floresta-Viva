@@ -227,3 +227,19 @@ recuperação de no máximo 20 dias de jogo em ≤ 8 passos (`FF_MAX_HOURS`,
 A queda usa risco acumulado: `1 − exp(−(Δt/hold)·(0,45 + idade²)·chuva)`, com
 `hold` variando por espécie, saúde e por fruto (`holdBias`) — fruto maduro nunca
 fica indefinidamente na planta.
+
+## Recortes das árvores (`src/render/manifest.ts`)
+
+`TREE_RECTS` é gerado por `npx tsx tools/gen-tree-frames.ts`, que mede cada
+sprite como componente conexa de alpha (união das 5 variantes sazonais) e grava
+`tools/data/tree-frames.json` + o bloco no manifesto. Assim o recorte sempre
+inclui **copa + tronco** e nunca invade o sprite vizinho.
+
+| porte | altura do recorte | observação |
+| --- | --- | --- |
+| `small` | 45–51 px | inalterado |
+| `big` (média) | **88–96 px** | antes: 55–63 px → desenhava só a copa (bug do tronco) |
+| `bigger` | 126–128 px | inalterado |
+
+`tests/trees.test.ts` falha se qualquer variante não couber no recorte, se a
+média tiver menos de 80 px de altura ou se dois recortes se sobrepuserem.
