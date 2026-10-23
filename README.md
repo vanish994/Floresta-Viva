@@ -14,7 +14,7 @@ decomposição, erosão, clima, estações) evoluem em frequências separadas do
 ```bash
 npm install
 npm run dev          # abre o jogo (Vite em 0.0.0.0:5173)
-npm test             # 141 testes (determinismo, continuidade, hidrologia, água, erosão, natação, ecossistema, tempo, chunks, persistência)
+npm test             # 156 testes (determinismo, continuidade, hidrologia, água, erosão, natação, ecossistema, tempo, chunks, persistência)
 npm run preview:world  # validação visual headless: renderiza PNGs reais + mapas de campos
 npm run scenario:water # cenário reproduzível da física da água (volumes + orçamento)
 npm run scenario:erosion # cenário reproduzível de erosão/sedimentação/margens
@@ -117,7 +117,10 @@ O jogo é jogável no celular (toque), não só no desktop:
   no crescimento; decomposição rápida/lenta → húmus/nutrientes; fauna com
   fome/sede/saúde que come recursos reais, defeca matéria orgânica e dispersa
   sementes. Ver [`docs/EVOLUCAO_CAUSAL.md`](docs/EVOLUCAO_CAUSAL.md).
-- **Fauna visual**: coelho (vegetação/grama), sapo (água/margem) e ave (árvores),
+- **Fauna visual**: coelho (vegetação/grama), sapo (água/margem), ave (árvores) e
+  **cobra predadora** (emboscada, bote, desiste de perseguições longas) com IA
+  compartilhada (percepção → necessidades → memória → decisão) e cadeia
+  alimentar presa/predador,
   com estados idle/wander/seek/eat/flee/rest/sleep, fuga do jogador, hábitos
   diurno/noturno e sprites extraídos da prancha fornecida em pixel art 1:1
   (coelho 21×17, sapo 27×15, ave 19×14). Ver [`docs/FAUNA.md`](docs/FAUNA.md).

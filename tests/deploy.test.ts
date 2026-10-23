@@ -22,7 +22,10 @@ describe('contrato de deploy (Pages em subpath)', () => {
     const main = read('src/main.ts');
     expect(main).toContain("const assetBase = './';");
     expect(main).not.toContain('BASE_URL}assets/');
-    expect(main).toContain('renderer.load(allAssetFiles(), assetBase)');
+    // a lista de assets pode vir de uma constante local (`spriteFiles`), mas
+    // continua sendo `allAssetFiles()` com base relativa (contrato do Pages)
+    expect(main).toMatch(/const spriteFiles = allAssetFiles\(\)|renderer\.load\(allAssetFiles\(\), assetBase\)/);
+    expect(main).toMatch(/renderer\.load\((spriteFiles|allAssetFiles\(\)), assetBase\)/);
   });
 
   it('CanvasRenderer: base padrão relativa + versão de build na query', () => {

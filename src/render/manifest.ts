@@ -109,7 +109,7 @@ export interface FaunaSheet {
   frameMs: Record<string, number>;
 }
 
-export const FAUNA_SHEETS: Record<'rabbit' | 'frog' | 'bird', FaunaSheet> = {
+export const FAUNA_SHEETS: Record<'rabbit' | 'frog' | 'bird' | 'snake', FaunaSheet> = {
   rabbit: {
     file: 'Animals/rabbit.png',
     cellW: 21, cellH: 17, maxFrames: 6,
@@ -128,6 +128,13 @@ export const FAUNA_SHEETS: Record<'rabbit' | 'frog' | 'bird', FaunaSheet> = {
     rows: { idle: 0, fly: 1, land: 2, eat: 3, sleep: 4 },
     frameMs: { idle: 260, fly: 90, land: 130, eat: 200, sleep: 440 },
   },
+  // predador: spritesheet extraída da prancha fornecida (7 animações, até 11 frames)
+  snake: {
+    file: 'Animals/snake.png',
+    cellW: 41, cellH: 20, maxFrames: 11,
+    rows: { idle: 0, move: 1, attack: 2, hide: 3, death: 4, hurt: 5, sleep: 6 },
+    frameMs: { idle: 240, move: 120, attack: 90, hide: 260, death: 160, hurt: 120, sleep: 380 },
+  },
 };
 
 /** recorte de um quadro da fauna (linha da animação × coluna do frame) */
@@ -145,10 +152,17 @@ const FAUNA_FRAMES: Record<string, Record<string, number>> = {
   rabbit: { idle: 6, walk: 6, run: 5, jump: 5, eat: 6, sleep: 5 },
   frog: { idle: 4, jump: 4, swim: 5, eat: 4, sleep: 4 },
   bird: { idle: 5, fly: 4, land: 4, eat: 4, sleep: 4 },
+  snake: { idle: 11, move: 11, attack: 8, hide: 9, death: 7, hurt: 7, sleep: 8 },
 };
 
 function countFor(sheet: FaunaSheet, anim: string): number {
-  const key = sheet.file.includes('rabbit') ? 'rabbit' : sheet.file.includes('frog') ? 'frog' : 'bird';
+  const key = sheet.file.includes('rabbit')
+    ? 'rabbit'
+    : sheet.file.includes('frog')
+      ? 'frog'
+      : sheet.file.includes('snake')
+        ? 'snake'
+        : 'bird';
   return FAUNA_FRAMES[key]?.[anim] ?? sheet.maxFrames;
 }
 

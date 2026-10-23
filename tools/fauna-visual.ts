@@ -77,14 +77,19 @@ function main(): void {
   showcase.push(make('rabbit', 0, 'idle'));
   showcase.push(make('rabbit', 46, 'wander'));
   showcase.push(make('rabbit', 92, 'eat'));
-  showcase.push(make('frog', 150, 'idle'));
-  showcase.push(make('frog', 196, 'swim'));
-  showcase.push(make('bird', 250, 'idle'));
-  showcase.push(make('bird', 300, 'fly', { hover: 14 }));
+  showcase.push(make('rabbit', 140, 'flee')); // fugindo da cobra
+  showcase.push(make('frog', 205, 'idle'));
+  showcase.push(make('frog', 255, 'swim'));
+  showcase.push(make('frog', 305, 'seek_food')); // caçando inseto
+  showcase.push(make('bird', 370, 'idle'));
+  showcase.push(make('bird', 425, 'fly', { hover: 14 }));
+  showcase.push(make('snake', 495, 'chase')); // perseguindo o sapo
+  showcase.push(make('snake', 560, 'rest'));
+  showcase.push(make('snake', 625, 'hide'));
   const faunaMap = (world as unknown as { faunaByChunk: Map<string, Animal[]> }).faunaByChunk;
   faunaMap.set('0,0', showcase);
 
-  const cam = { x: baseX - 40, y: baseY - 90, w: 420, h: 120 };
+  const cam = { x: baseX - 40, y: baseY - 100, w: 760, h: 150 };
   const scene = composeScene(world, cam, {
     timeMs: 1200,
     player: { x: baseX - 20, y: baseY + 6, moving: false, frame: 0, female: false, facing: 1 },

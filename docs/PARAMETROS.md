@@ -143,11 +143,15 @@ Equilíbrio da umidade = `0,34 + 0,26·sazonal + 0,10·floresta + 0,08·água �
 
 | item | valor | efeito |
 | --- | --- | --- |
-| `FAUNA_CAP` | coelho 3 · sapo 3 · ave 2 | teto de animais por chunk |
+| `FAUNA_CAP` | coelho 3 · sapo 3 · ave 2 · **cobra 1** | teto de animais por chunk |
 | velocidade | coelho 26 · sapo 14 · ave 34 px/s | passo local por hora de jogo |
 | `searchCells` | 2–3 células | raio de busca de fruta/água |
 | hábitos | coelho e ave diurnos, sapo noturno | dormem/ativos conforme a hora |
 | fuga | raio de 70 px do jogador | prioridade máxima no estado |
+| `MEMORY_HOURS` | 1,2 h de jogo | validade da memória de presa/ameaça |
+| `MAX_CHASE_HOURS` | 1,5 h de jogo | tempo máximo de perseguição antes de desistir |
+| cobra | `speed 40` · `attackRange 18` · `attackDamage 0,6` · `huntRange 190` | predador de emboscada com bote |
+| cobra (bote) | 2,3× de velocidade em `chase`/`attack` | arranque curto, não é "míssil" |
 
 ## Personagem / natação (`src/game/player.ts`)
 

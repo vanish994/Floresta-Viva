@@ -99,7 +99,7 @@ export class NullFauna implements FaunaSystem {
 // a população distante continua sendo representada pelo modelo abstrato
 // `faunaActivity` acima (que já alimenta a zoocoria).
 
-export type FaunaKind = 'rabbit' | 'frog' | 'bird';
+export type FaunaKind = 'rabbit' | 'frog' | 'bird' | 'snake';
 
 export type FaunaAnim =
   | 'idle'
@@ -110,7 +110,13 @@ export type FaunaAnim =
   | 'sleep'
   | 'fly'
   | 'land'
-  | 'swim';
+  | 'swim'
+  // cobra: intenções do spritesheet fornecido
+  | 'move'
+  | 'attack'
+  | 'hide'
+  | 'hurt'
+  | 'death';
 
 /** intenção do agente (traduzida em animação no render) */
 export type FaunaState =
@@ -124,7 +130,13 @@ export type FaunaState =
   | 'seek_water'
   | 'swim'
   | 'fly'
-  | 'land';
+  | 'land'
+  // predador (cobra) e estados compartilhados de IA
+  | 'hunt'
+  | 'chase'
+  | 'attack'
+  | 'hide'
+  | 'dead';
 
 export interface FaunaAgentView {
   id: number;
@@ -177,6 +189,28 @@ export interface Animal {
   quirk: number;
   /** altura de voo da ave (px) */
   hover: number;
+
+  // --- IA comportamental (percepção → necessidades → memória → decisão) ---
+  /**
+   * Memória curta e barata: último alvo/presa e o instante (h de jogo) em que
+   * foi visto. Depois de `MEMORY_HOURS` a lembrança expira e o animal volta a
+   * explorar em vez de "esquecer" instantaneamente.
+   */
+  memory?: {
+    /** id da criatura lembrada (presa ou ameaça) */
+    targetId: number;
+    /** posição lembrada */
+    x: number;
+    y: number;
+    /** hora de jogo da última percepção */
+    hour: number;
+    /** 'prey' = presa perseguida; 'threat' = perigo a evitar */
+    kind: 'prey' | 'threat';
+  };
+  /** duração da perseguição atual (h de jogo) — evita caçar para sempre */
+  chaseHours?: number;
+  /** 0..1 — medo (sobe com ameaça, cai com o tempo) */
+  fear?: number;
 }
 
 /** cria um agente com todos os campos (usado no spawn e em testes/tools) */
@@ -220,6 +254,14 @@ interface FaunaTraits {
   avoidsDeepWater: boolean;
   /** voa? (ave) */
   flying: boolean;
+  /** predador: espécies que caça (vazio = herbívoro/onívoro) */
+  prey?: FaunaKind[];
+  /** alcance do ataque (px) — só ataca dentro disso */
+  attackRange?: number;
+  /** dano por ataque (pontos de saúde) */
+  attackDamage?: number;
+  /** alcance da percepção de presas (px) */
+  huntRange?: number;
 }
 
 export const FAUNA_TRAITS: Record<FaunaKind, FaunaTraits> = {
@@ -235,10 +277,25 @@ export const FAUNA_TRAITS: Record<FaunaKind, FaunaTraits> = {
     kind: 'bird', speed: 95, step: 12, searchCells: 3, diurnal: true,
     needsWater: false, avoidsDeepWater: true, flying: true,
   },
+  snake: {
+    // predador de emboscada: base lenta, mas com arranque (bote) na perseguição
+    kind: 'snake', speed: 40, step: 7, searchCells: 3, diurnal: false,
+    needsWater: false, avoidsDeepWater: true, flying: false,
+    // cadeia alimentar: sapo é a presa preferida; coelho/ave são oportunistas
+    prey: ['frog', 'rabbit', 'bird'],
+    attackRange: 18,
+    attackDamage: 0.6,
+    huntRange: 190,
+  },
 };
 
 /** tetos por chunk (mobile-first) */
-export const FAUNA_CAP: Record<FaunaKind, number> = { rabbit: 3, frog: 3, bird: 2 };
+export const FAUNA_CAP: Record<FaunaKind, number> = { rabbit: 3, frog: 3, bird: 2, snake: 1 };
+
+/** memória curta: horas de jogo até a lembrança de presa/ameaça expirar */
+export const MEMORY_HOURS = 1.2;
+/** tempo máximo de perseguição antes de desistir (h de jogo) */
+export const MAX_CHASE_HOURS = 1.5;
 
 const CELL_PX_STD = 64;
 
@@ -348,7 +405,7 @@ export function seedFauna(
       // id estável por (chunk, espécie, índice) — inclui a ESPÉCIE e o canal no
       // hash para que sapo e ave nunca compartilhem id
       const kindIndex = out.filter((a) => a.kind === kind).length;
-      const kindCode = kind === 'rabbit' ? 1 : kind === 'frog' ? 2 : 3;
+      const kindCode = kind === 'rabbit' ? 1 : kind === 'frog' ? 2 : kind === 'bird' ? 3 : 4;
       out.push(
         makeAnimal({
           id: Math.floor(
@@ -382,6 +439,13 @@ export function seedFauna(
   place('rabbit', rabbitTarget);
   place('frog', frogTarget);
   place('bird', birdTarget);
+
+  // --- cobra: predador depende de PRESAS (sapo/coelho/ave) e de abrigo -----
+  const preyHere = out.length;
+  const snakeTarget = Math.round(
+    FAUNA_CAP.snake * clamp(preyHere / 4 + vegShare * 0.25 + wetShare * 0.3, 0, 1) * (preyHere >= 2 ? 1 : 0.4),
+  );
+  place('snake', snakeTarget);
   return out;
 }
 
@@ -401,10 +465,41 @@ export interface FaunaStepOptions {
   consumeFruit?: (chunk: Chunk, x: number, y: number, radius: number) => { species: number } | null;
   /** registra uma morte (o mundo remove o agente e devolve matéria orgânica) */
   onDeath?: (animal: Animal) => void;
+  /**
+   * Percepção de criaturas: devolve os animais próximos (mesma pool do mundo).
+   * Usada para predador ver presa e presa ver predador — sem varrer o mapa.
+   */
+  nearbyAnimals?: (animal: Animal, radius: number) => Animal[];
+  /** aplica dano a uma presa (o mundo é dono da saúde e da morte) */
+  damageAnimal?: (prey: Animal, amount: number) => void;
 }
 
 /** mapeia estado → animação disponível no spritesheet da espécie */
 export function animFor(kind: FaunaKind, state: FaunaState, moving: boolean, inWater: boolean): FaunaAnim {
+  if (kind === 'snake') {
+    // só as animações que existem na folha fornecida (idle/move/attack/hide/
+    // hurt/death/sleep) — nunca inventar frame
+    switch (state) {
+      case 'dead':
+        return 'death';
+      case 'attack':
+        return 'attack';
+      case 'hide':
+      case 'rest':
+        return 'hide';
+      case 'sleep':
+        return 'sleep';
+      case 'flee':
+      case 'wander':
+      case 'seek_food':
+      case 'seek_water':
+      case 'hunt':
+      case 'chase':
+        return moving ? 'move' : 'idle';
+      default:
+        return 'idle';
+    }
+  }
   if (kind === 'frog') {
     if (inWater) return 'swim';
     if (state === 'eat') return 'eat';
@@ -516,6 +611,275 @@ function nearestFood(chunk: Chunk, x: number, y: number, reach: number): { x: nu
   return best;
 }
 
+// ===========================================================================
+// IA comportamental compartilhada (percepção → necessidades → memória →
+// decisão → ação). Leve e determinística: busca local pelos pools do chunk,
+// sem pathfinding e sem recalcular tudo a cada quadro.
+// ===========================================================================
+
+/** o que uma criatura percebeu à volta (busca local, O(pool do chunk)) */
+export interface Perception {
+  /** presa mais próxima (se for predador) */
+  prey: Animal | null;
+  preyDist: number;
+  /** ameaça mais próxima (predador maior, jogador) */
+  threat: Animal | null;
+  threatDist: number;
+  /** água mais próxima (px) */
+  water: { x: number; y: number } | null;
+  waterDist: number;
+  /** inseto mais próximo */
+  insect: { x: number; y: number } | null;
+  insectDist: number;
+  /** fruto no chão mais próximo */
+  fruit: { x: number; y: number } | null;
+  fruitDist: number;
+  /** forragem na célula atual (coelho) */
+  forage: number;
+}
+
+const dist2 = (ax: number, ay: number, bx: number, by: number): number => {
+  const dx = ax - bx;
+  const dy = ay - by;
+  return dx * dx + dy * dy;
+};
+
+/**
+ * Percepção local: olha só os animais do próprio chunk (+ vizinhos via
+ * `nearbyAnimals`, quando o mundo fornece) e os recursos já indexados
+ * (insetos do pool, frutos no chão, água por célula). Nada de varrer o mundo.
+ */
+export function perceive(animal: Animal, cfg: WorldConfig, opts: FaunaStepOptions): Perception {
+  const traits = FAUNA_TRAITS[animal.kind];
+  const chunk = animal.chunk;
+  const cellPx = cellPxOf(cfg);
+  const huntRange = traits.huntRange ?? 120;
+
+  let prey: Animal | null = null;
+  let preyDist = Infinity;
+  let threat: Animal | null = null;
+  let threatDist = Infinity;
+
+  const others = opts.nearbyAnimals?.(animal, huntRange * 1.2) ?? [];
+  const preyKinds = traits.prey ?? [];
+  for (const other of others) {
+    if (other === animal || other.state === 'dead') continue;
+    const d2 = dist2(animal.x, animal.y, other.x, other.y);
+    if (d2 > huntRange * huntRange) continue;
+    // presa: só as espécies da dieta (o sapo é presa preferida da cobra)
+    if (preyKinds.includes(other.kind)) {
+      const prefer = other.kind === preyKinds[0] ? 0.75 : 1; // preferência
+      if (d2 * prefer < preyDist) {
+        preyDist = d2 * prefer;
+        prey = other;
+      }
+    }
+    // ameaça: qualquer predador (inclusive a própria cobra, para os demais)
+    const otherTraits = FAUNA_TRAITS[other.kind];
+    if (otherTraits.prey && otherTraits.prey.includes(animal.kind)) {
+      if (d2 < threatDist) {
+        threatDist = d2;
+        threat = other;
+      }
+    }
+  }
+
+  const water = nearestWater(chunk, cfg, animal.x, animal.y);
+  const insect = animal.kind === 'frog' || animal.kind === 'bird'
+    ? nearestInsect(chunk, animal.x, animal.y, 4 * cellPx)
+    : null;
+  const fruit = animal.kind === 'bird' || animal.kind === 'rabbit'
+    ? nearestFood(chunk, animal.x, animal.y, 3 * cellPx)
+    : null;
+  const lx = clamp(Math.floor(animal.x / cellPx) - chunk.cx * chunk.n, 0, chunk.n - 1);
+  const ly = clamp(Math.floor(animal.y / cellPx) - chunk.cy * chunk.n, 0, chunk.n - 1);
+  const forage = chunk.forage[chunk.cellIdx(lx, ly)] ?? 0;
+
+  return {
+    prey,
+    preyDist: Math.sqrt(preyDist),
+    threat,
+    threatDist: Math.sqrt(threatDist),
+    water,
+    waterDist: water ? Math.hypot(water.x - animal.x, water.y - animal.y) : Infinity,
+    insect,
+    insectDist: insect ? Math.hypot(insect.x - animal.x, insect.y - animal.y) : Infinity,
+    fruit,
+    fruitDist: fruit ? Math.hypot(fruit.x - animal.x, fruit.y - animal.y) : Infinity,
+    forage,
+  };
+}
+
+/** atualiza a memória curta (expira depois de MEMORY_HOURS) */
+export function remember(
+  animal: Animal,
+  kind: 'prey' | 'threat',
+  target: Animal | null,
+  hour: number,
+): void {
+  if (!target) {
+    // sem alvo: a memória antiga expira sozinha com o tempo
+    if (animal.memory && hour - animal.memory.hour > MEMORY_HOURS) animal.memory = undefined;
+    return;
+  }
+  animal.memory = { targetId: target.id, x: target.x, y: target.y, hour, kind };
+}
+
+/** memória ainda válida? (e atualiza a posição lembrada enquanto visível) */
+function freshMemory(animal: Animal, hour: number): Animal['memory'] {
+  const m = animal.memory;
+  if (!m) return undefined;
+  if (hour - m.hour > MEMORY_HOURS) {
+    animal.memory = undefined;
+    return undefined;
+  }
+  return m;
+}
+
+/**
+ * Decisão: traduz percepção + necessidades + memória em estado/alvo.
+ * Ordem de prioridade (igual para todas as espécies):
+ *   sobrevivência (fuga) > sede extrema > fome > caça (predador) > descanso >
+ *   exploração. A personalidade (`quirk`) ajusta limiares e distâncias.
+ */
+export function decide(animal: Animal, cfg: WorldConfig, opts: FaunaStepOptions, percept: Perception): void {
+  const traits = FAUNA_TRAITS[animal.kind];
+  const hour = opts.hour + opts.worldDay * 24;
+  const fear = animal.fear ?? 0;
+  // quirk: 0 = cauteloso, 1 = ousado/explorador
+  const boldness = animal.quirk;
+  const threatRange = 90 + animal.quirk * 45;
+
+  // --- 1. sobrevivência: ameaça perto → foge (mesmo com fome) -------------
+  if (percept.threat && percept.threatDist < threatRange) {
+    let tx = animal.x;
+    let ty = animal.y;
+    if (percept.threatDist > 0.5) {
+      const dx = animal.x - percept.threat.x;
+      const dy = animal.y - percept.threat.y;
+      const d = Math.hypot(dx, dy) || 1;
+      tx = clamp(animal.x + (dx / d) * 70, animal.chunk.cx * animal.chunk.n * cellPxOf(cfg), (animal.chunk.cx + 1) * animal.chunk.n * cellPxOf(cfg));
+      ty = clamp(animal.y + (dy / d) * 70, animal.chunk.cy * animal.chunk.n * cellPxOf(cfg), (animal.chunk.cy + 1) * animal.chunk.n * cellPxOf(cfg));
+    }
+    animal.state = 'flee';
+    animal.tx = tx;
+    animal.ty = ty;
+    animal.timer = 0;
+    animal.fear = clamp(fear + 0.4, 0, 1);
+    remember(animal, 'threat', percept.threat, hour);
+    return;
+  }
+  // memória de perigo: evita voltar ao local por um tempo
+  const threatMemory = freshMemory(animal, hour);
+  if (!percept.threat && threatMemory && threatMemory.kind === 'threat' && fear > 0.05) {
+    const dx = animal.x - threatMemory.x;
+    const dy = animal.y - threatMemory.y;
+    if (Math.hypot(dx, dy) < 55) {
+      const d = Math.hypot(dx, dy) || 1;
+      animal.state = 'flee';
+      animal.tx = animal.x + (dx / d) * 40;
+      animal.ty = animal.y + (dy / d) * 40;
+      animal.timer = 0;
+      return;
+    }
+  }
+
+  // --- 2. sede: beber / ir até a água ------------------------------------
+  const thirstLimit = 0.55 + animal.quirk * 0.2;
+  if (animal.thirst > thirstLimit && percept.water && percept.waterDist < 260) {
+    animal.state = 'seek_water';
+    animal.tx = percept.water.x;
+    animal.ty = percept.water.y;
+    animal.timer = 0;
+    return;
+  }
+
+  // --- 3. predador: caçar quando com fome ----------------------------------
+  const huntHunger = 0.45 + (1 - boldness) * 0.1; // ousado caça mais cedo
+  if (traits.prey && animal.hunger > huntHunger) {
+    const target = percept.prey ?? preyFromMemory(animal, hour, opts);
+    if (target) {
+      const d = Math.hypot(target.x - animal.x, target.y - animal.y);
+      remember(animal, 'prey', target, hour);
+      animal.chaseHours = (animal.chaseHours ?? 0) + 0.016;
+      // perseguição longa sem sucesso: desiste e descansa
+      if (animal.chaseHours > MAX_CHASE_HOURS) {
+        animal.chaseHours = 0;
+        animal.memory = undefined;
+        animal.state = 'rest';
+        animal.timer = 0;
+        animal.hunger = clamp(animal.hunger + 0.05, 0, 1); // gastou energia
+        return;
+      }
+      if (d <= (traits.attackRange ?? 14)) {
+        animal.state = 'attack';
+        animal.tx = target.x;
+        animal.ty = target.y;
+        animal.timer = 0;
+        animal.animPhase = 0;
+      } else if (d <= (traits.huntRange ?? 150)) {
+        animal.state = 'chase';
+        animal.tx = target.x;
+        animal.ty = target.y;
+        animal.timer = 0;
+      }
+      return;
+    }
+  }
+
+  // --- 4. fome: procurar comida (dieta de cada espécie) --------------------
+  const hungry = animal.hunger > 0.5;
+  if (hungry) {
+    const food = bestFoodTarget(animal, percept, opts);
+    if (food) {
+      animal.state = 'seek_food';
+      animal.tx = food.x;
+      animal.ty = food.y;
+      animal.timer = 0;
+      return;
+    }
+  }
+
+  // --- 5. descanso: predador satisfeito esconde/descansa ------------------
+  if (traits.prey && animal.hunger < 0.35 && animal.timer > 3) {
+    animal.state = animal.quirk > 0.5 ? 'hide' : 'rest';
+    animal.timer = 0;
+    return;
+  }
+
+  // --- 6. exploração ------------------------------------------------------
+  if (animal.state === 'idle' && animal.timer > 1.2 + animal.quirk * 2) {
+    chooseTarget(animal, cfg, opts);
+    animal.timer = 0;
+  }
+}
+
+/** presa lembrada (persegue a região por alguns instantes) */
+function preyFromMemory(animal: Animal, hour: number, opts: FaunaStepOptions): Animal | null {
+  const m = freshMemory(animal, hour);
+  if (!m || m.kind !== 'prey') return null;
+  const others = opts.nearbyAnimals?.(animal, 260) ?? [];
+  return others.find((o) => o.id === m.targetId && o.state !== 'dead') ?? null;
+}
+
+/** melhor alvo de comida segundo a dieta (forragem, inseto, fruto) */
+function bestFoodTarget(animal: Animal, percept: Perception, opts: FaunaStepOptions): { x: number; y: number } | null {
+  if (animal.kind === 'rabbit') {
+    // coelho: forragem na célula; se não houver, procura fruta/folhagem perto
+    if (percept.forage > 0.12) return { x: animal.x, y: animal.y };
+    return percept.fruit && percept.fruitDist < 200 ? percept.fruit : null;
+  }
+  if (animal.kind === 'frog') {
+    return percept.insect && percept.insectDist < 200 ? percept.insect : null;
+  }
+  if (animal.kind === 'bird') {
+    if (percept.fruit && percept.fruitDist < 240 && animal.hunger > 0.6) return percept.fruit;
+    return percept.insect && percept.insectDist < 220 ? percept.insect : null;
+  }
+  void opts;
+  return null;
+}
+
 /**
  * Passo da fauna visual: estados simples, movimento local e reação ao ambiente.
  * `hours` é o intervalo de jogo coberto (a chamada usa passos curtos).
@@ -534,7 +898,8 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
     // --- necessidades: fome e sede sobem, energia cai ---------------------
     animal.hunger = clamp(animal.hunger + h * 0.055, 0, 1);
     // aves obtêm água dos frutos/insetos: sentem menos sede que mamíferos/anfíbios
-    const thirstRate = animal.kind === 'bird' ? 0.035 : 0.055;
+    // aves tiram água dos frutos e a cobra das presas: sentem menos sede
+    const thirstRate = animal.kind === 'bird' ? 0.035 : animal.kind === 'snake' ? 0.03 : 0.055;
     animal.thirst = clamp(animal.thirst + h * thirstRate, 0, 1);
     animal.energy = clamp(animal.energy - h * 0.02, 0, 1);
     // fome/sede extremas corroem a saúde; alimentar-se recupera
@@ -613,6 +978,47 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
       animal.poopTimer = 2.5 + animal.quirk * 3;
     }
 
+    // --- IA compartilhada: percepção → memória → decisão --------------------
+    // (roda a cada passo do mundo; o movimento continua por quadro abaixo)
+    const percept = perceive(animal, cfg, opts);
+    animal.fear = clamp((animal.fear ?? 0) - h * 0.35, 0, 1);
+    decide(animal, cfg, opts, percept);
+
+    // --- ataque do predador (só dentro do alcance) -------------------------
+    if (animal.state === 'attack' && percept.prey) {
+      const d = Math.hypot(percept.prey.x - animal.x, percept.prey.y - animal.y);
+      if (d <= (traits.attackRange ?? 14) + 2) {
+        // dano proporcional ao tempo REAL do passo (h de jogo → segundos)
+        const dmg = (traits.attackDamage ?? 0.5) * (h * 60) * 1.6;
+        opts.damageAnimal?.(percept.prey, dmg);
+        animal.energy = clamp(animal.energy - h * 0.05, 0, 1);
+        if (percept.prey.health <= 0.02) {
+          // abateu a presa: alimenta-se dela (o mundo remove a carcaça)
+          animal.hunger = clamp(animal.hunger - 0.55, 0, 1);
+          animal.energy = clamp(animal.energy + 0.45, 0, 1);
+          animal.state = 'rest';
+          animal.timer = 0;
+          animal.chaseHours = 0;
+          animal.memory = undefined;
+        }
+      } else {
+        animal.state = 'chase';
+        animal.tx = percept.prey.x;
+        animal.ty = percept.prey.y;
+      }
+    }
+    if (animal.state === 'chase' && percept.prey) {
+      // a presa pode escapar: se ficar longe demais, a perseguição termina
+      const d = Math.hypot(percept.prey.x - animal.x, percept.prey.y - animal.y);
+      if (d > (traits.huntRange ?? 150) * 1.15) {
+        animal.state = 'rest';
+        animal.chaseHours = 0;
+      } else {
+        animal.tx = percept.prey.x;
+        animal.ty = percept.prey.y;
+      }
+    }
+
     // --- escolha de alvo ---------------------------------------------------
     if (animal.state === 'idle' && animal.timer > 1.2 + animal.quirk * 2) {
       chooseTarget(animal, cfg, opts);
@@ -633,12 +1039,34 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
     } else if (animal.state === 'flee' && animal.timer > 1.6) {
       animal.state = 'idle';
       animal.timer = 0;
+    } else if ((animal.state === 'rest' || animal.state === 'hide') && animal.timer > 2.5 + animal.quirk * 2) {
+      animal.energy = clamp(animal.energy + h * 0.4, 0, 1);
+      animal.state = 'idle';
+      animal.timer = 0;
+    } else if (animal.state === 'attack') {
+      // bote: curto. Depois volta a perseguir (a decisão reavalia a distância)
+      if (animal.timer > 0.35) {
+        animal.state = 'chase';
+        animal.timer = 0;
+      }
     }
 
     // --- movimento ---------------------------------------------------------
-    const moving = animal.state === 'wander' || animal.state === 'seek_food' || animal.state === 'seek_water' || animal.state === 'flee';
+    const moving =
+      animal.state === 'wander' ||
+      animal.state === 'seek_food' ||
+      animal.state === 'seek_water' ||
+      animal.state === 'flee' ||
+      animal.state === 'chase' ||
+      animal.state === 'hunt';
     if (moving) {
-      const speed = traits.speed * (animal.state === 'flee' ? 2.1 : 1) * (0.6 + animal.energy * 0.6);
+      // cobra em perseguição faz o "bote": arranque curto e limitado
+      const lunge = animal.kind === 'snake' && (animal.state === 'chase' || animal.state === 'attack') ? 2.3 : 1;
+      const speed =
+        traits.speed *
+        (animal.state === 'flee' ? 2.1 : animal.state === 'chase' ? 1.45 : 1) *
+        lunge *
+        (0.6 + animal.energy * 0.6);
       const dx = animal.tx - animal.x;
       const dy = animal.ty - animal.y;
       const dist = Math.hypot(dx, dy);
@@ -646,9 +1074,11 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
         const vx = (dx / dist) * speed;
         const vy = (dy / dist) * speed * 0.6; // perspectiva: desloca menos em Y
         // colisão leve: não entra em água funda (coelho/ave) nem em terra seca (sapo)
-        // deslocamento por passo limitado (sem saltos entre células)
-        const dxs = clamp(vx * dtSec, -30, 30);
-        const dys = clamp(vy * dtSec, -30, 30);
+        // deslocamento por passo limitado e SEM ultrapassar o alvo
+        // (evita "overshoot": o predador passava pela presa e ficava oscilando)
+        const stepLen = Math.min(Math.hypot(vx * dtSec, vy * dtSec), dist, 30);
+        const dxs = (dx / dist) * stepLen;
+        const dys = (dy / dist) * stepLen;
         const nextX = animal.x + dxs;
         const nextY = animal.y + dys;
         const spot = spotAt(chunk, cfg, nextX, nextY, opts.worldDay);
@@ -742,6 +1172,10 @@ function feedAnimal(animal: Animal, cfg: WorldConfig, opts: FaunaStepOptions, h:
   };
   const searchR = 22;
 
+  if (animal.kind === 'snake') {
+    // predador: alimenta-se da presa abatida (ver ataque em stepFauna)
+    return;
+  }
   if (animal.kind === 'rabbit') {
     if (chunk.forage[i] > 0.12) {
       chunk.forage[i] = Math.max(0, chunk.forage[i] - h * 0.05);
@@ -814,6 +1248,28 @@ function poop(animal: Animal, cfg: WorldConfig, opts: FaunaStepOptions): void {
     animal.carriedSeed = null;
   }
   void opts;
+}
+
+/**
+ * Aplica dano de predação a uma presa. A morte é decidida pelo MUNDO (que
+ * remove do pool e devolve matéria orgânica), então aqui só reduzimos a saúde
+ * e marcamos o estado de fuga/ferida.
+ */
+export function applyPredationDamage(prey: Animal, amount: number, attacker?: Animal): void {
+  if (prey.state === 'dead') return;
+  if (!(amount > 0)) return;
+  prey.health = clamp(prey.health - Math.max(0, amount), 0, 1);
+  prey.fear = clamp((prey.fear ?? 0) + 0.5, 0, 1);
+  prey.state = 'flee';
+  prey.timer = 0;
+  if (attacker) {
+    // foge para longe do atacante
+    const dx = prey.x - attacker.x;
+    const dy = prey.y - attacker.y;
+    const d = Math.hypot(dx, dy) || 1;
+    prey.tx = prey.x + (dx / d) * 80;
+    prey.ty = prey.y + (dy / d) * 60;
+  }
 }
 
 /** quadro de animação (0..frames-1) para o tempo corrente */

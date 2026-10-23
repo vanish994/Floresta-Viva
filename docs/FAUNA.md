@@ -102,7 +102,10 @@ chunk dono.
 | 10 | render | `blit` correto (célula nativa), proporção preservada, y-sort |
 | 11 | integração | mundo semeia fauna, `stats.animals` bate e ela se move |
 
-`npm test` → **14 arquivos, 118 testes aprovados**. `npm run typecheck` e
+`npm test` → **16 arquivos, 156 testes aprovados** (15 novos em
+`tests/predator.test.ts`: nascer, perceber, perseguir, atacar, matar, comer,
+fome cair, desistir, coelho e sapo fugindo, tetos, sem presas, predação real,
+render e traços). `npm run typecheck` e
 `npm run build` ok (120 kB).
 
 ## 6. Teste visual
@@ -116,6 +119,46 @@ conferir escala e recorte. Também rodei o pipeline real
 O que **não** foi validado: jogar no navegador (não há teste de browser no
 projeto). O movimento, a fuga e a rotina foram verificados por simulação
 automatizada, não a sensação em tempo real.
+
+## 6.1 Cobra (predador) e IA comportamental (atualização)
+
+### Sprites
+`tools/extract-snake-sprites.ts` lê a prancha fornecida (`tools/data/snake-reference.png`),
+separa a cobra das caixas de rótulo e do fundo quadriculado por saturação,
+detecta cada frame por componentes conexos, reduz com escala única e grava
+`assets/Animals/snake.png` (célula **41×20**, 7 animações: idle 11, move 11,
+attack 8, hide 9, death 7, hurt 7, sleep 8). Alpha binário, sem halo.
+
+### IA compartilhada (`fauna.ts`)
+Pipeline único, usado por todas as espécies — sem segundo sistema de fauna:
+
+```
+perceive()  → busca local (animais do chunk + vizinhos, insetos, frutos, água, forragem)
+decide()    → prioridades: sobrevivência (fuga) > sede > fome > caça > descanso > explorar
+remember()  → memória curta (MEMORY_HOURS) de presa/ameaça, com posição e hora
+ação        → estado + alvo; o movimento continua por quadro (px/s)
+```
+
+- **Personalidade**: o `quirk` (0..1) ajusta limiares (ousado caça mais cedo,
+  cauteloso foge de mais longe) — determinístico por indivíduo.
+- **Cobra**: `FAUNA_TRAITS.snake.prey = ['frog','rabbit','bird']` (sapo é a
+  presa preferida), `attackRange 18`, `attackDamage 0.6`, `huntRange 190`.
+  Persegue com **bote** (arranque 2,3× por curto período), ataca só no alcance,
+  **desiste** após `MAX_CHASE_HOURS` e descansa; satisfeita, explora/esconde.
+- **Presas**: coelho, sapo e ave detectam a cobra como ameaça, fogem (2,1× de
+  velocidade), guardam a região perigosa por alguns segundos e voltam ao normal.
+- **Morte**: o mundo remove do pool, marca `dead` e devolve matéria orgânica
+  (liteira + madeira + nutrientes). Nenhum sprite fantasma.
+- **População**: `FAUNA_CAP.snake = 1` por chunk; a reposição só ocorre com
+  presas suficientes no chunk (cobra não nasce em deserto de presas).
+
+### Resultado observado (seed 1337, 4 dias)
+`rabbit 14→6 · frog 10→7 · bird 17→6 · snake 9→5`; insetos 41→24. As cobras
+aumentam a pressão, as presas caem e depois **as próprias cobras passam fome**
+(5 de 9 com saúde baixa) — o ciclo presa/predador funciona sem script.
+
+Custo: **0,87 ms/frame** no desktop (49 chunks) e **0,50 ms/frame** no mobile
+(25 chunks), praticamente igual a antes da cobra.
 
 ## 7. Limitações
 
