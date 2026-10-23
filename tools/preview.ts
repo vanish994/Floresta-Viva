@@ -16,6 +16,7 @@ import { SoftwareRenderer, type SpriteSource } from './software';
 import { allAssetFiles } from '../src/render/manifest';
 import { composeScene, type DebugMode } from '../src/render/scene';
 import { World } from '../src/world/world';
+import { Player } from '../src/game/player';
 import { clamp } from '../src/core/rng';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -52,6 +53,7 @@ function main() {
   const debug = arg('debug', '') as DebugMode | '';
   const simHours = Number(arg('sim', '0')); // horas de jogo simuladas antes de renderizar
   const rain = arg('rain', '') === '1'; // força chuva máxima durante a simulação
+  const swimView = arg('swim', '') === '1'; // posiciona o personagem dentro da água
   let cellC = Number(arg('cell', '0'));
   const find = arg('find', '');
   let useFound = false;
@@ -121,10 +123,24 @@ function main() {
   const camX = useFound ? foundX * cellPx : centerX;
   const camY = useFound ? foundY * cellPx : centerY;
   const cam = { x: camX - W / 2, y: camY - H / 2, w: W, h: H };
+  // personagem opcional: em `--swim 1` ele é posicionado na água encontrada,
+  // com o MESMO Player do jogo (profundidade/correnteza reais definem a pose)
+  let playerView: ReturnType<Player['view']> | undefined;
+  if (swimView) {
+    const player = new Player();
+    player.x = camX;
+    player.y = camY;
+    player.update(world, 1 / 60, { x: 1, y: 0 });
+    playerView = player.view();
+    console.log(
+      `personagem: nadando=${playerView.swimming} lâmina=${player.water.depth.toFixed(2)} m ` +
+        `corrente=${player.water.currentSpeed.toFixed(3)} m/s fôlego=${(playerView.stamina ?? 0).toFixed(2)}`,
+    );
+  }
   const tc0 = Date.now();
   const scene = composeScene(world, cam, {
     timeMs: 0,
-    player: { x: camX, y: camY + 40, moving: false, frame: 0, female: false, facing: 1 },
+    player: playerView ?? { x: camX, y: camY + 40, moving: false, frame: 0, female: false, facing: 1 },
     debug: debug || null,
   });
   const composeMs = Date.now() - tc0;

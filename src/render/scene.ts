@@ -35,6 +35,16 @@ export interface PlayerView {
   frame: number;
   female: boolean;
   facing: 1 | -1;
+  /** nadando em água profunda (desenho com o corpo submerso) */
+  swimming?: boolean;
+  /** 0..1 fração do corpo submersa */
+  submerge?: number;
+  /** fôlego 0..1 */
+  stamina?: number;
+  /** fase da braçada (rad) */
+  swimPhase?: number;
+  /** velocidade atual em px/s (intensidade da esteira) */
+  speed?: number;
 }
 
 export interface SceneOptions {
@@ -354,12 +364,102 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
     items.push({
       y: pv.y,
       emit: () => {
-        const def = pv.moving ? (pv.female ? SPRITES.player_f_move : SPRITES.player_move) : pv.female ? SPRITES.player_f_idle : SPRITES.player_idle;
+        const moving = pv.swimming ? pv.moving || (pv.speed ?? 0) > 12 : pv.moving;
+        const def = moving ? (pv.female ? SPRITES.player_f_move : SPRITES.player_move) : pv.female ? SPRITES.player_f_idle : SPRITES.player_idle;
         const frame = def.frames[pv.frame % def.frames.length];
-        const dx = Math.round(pv.x - cam.x - frame[2] / 2);
-        const dy = Math.round(pv.y - cam.y - frame[3] + 2);
-        ops.push({ k: 'blit', img: def.file, sx: frame[0], sy: frame[1], sw: frame[2], sh: frame[3], dx, dy, dw: frame[2], dh: frame[3], flip: pv.facing === -1 });
+        const flip = pv.facing === -1;
+        const swimming = pv.swimming === true;
+        let dx = Math.round(pv.x - cam.x - frame[2] / 2);
+        let dy = Math.round(pv.y - cam.y - frame[3] + 2);
+        let sw = frame[2];
+        let sh = frame[3];
+        let dw = frame[2];
+        let dh = frame[3];
+
+        if (swimming) {
+          // o corpo entra na água: o sprite afunda e a parte de baixo é cortada
+          // na linha d'água (largura/altura proporcionais, sem esticar)
+          const submerge = clamp(pv.submerge ?? 0.25, 0, 0.6);
+          const bob = Math.sin(pv.swimPhase ?? opts.timeMs / 400) * 1.5;
+          const sink = 3 + submerge * 12;
+          dy = Math.round(pv.y - cam.y - frame[3] + 2 + sink + bob);
+          const visible = clamp(1 - submerge, 0.45, 1);
+          const cut = Math.max(6, Math.round(frame[3] * visible));
+          sh = Math.max(6, Math.round(frame[3] * visible));
+          dh = cut;
+          sw = frame[2];
+          dw = frame[2];
+          // sombra/água sobre a parte submersa: escurece a base visível
+          ops.push({
+            k: 'fill',
+            x: dx,
+            y: dy + dh - 4,
+            w: dw,
+            h: 4,
+            r: 24, g: 78, b: 104, a: 0.35,
+          });
+        }
+
+        ops.push({ k: 'blit', img: def.file, sx: frame[0], sy: frame[1], sw, sh, dx, dy, dw, dh, flip });
         spriteCount++;
+
+        if (swimming) {
+          // ondulação em volta do corpo (3 faixas curtas, alinhadas ao eixo)
+          const cx = Math.round(pv.x - cam.x);
+          const waterY = dy + dh;
+          const pulse = 0.55 + 0.45 * Math.sin((pv.swimPhase ?? 0) * 2);
+          const rip = clamp(pulse, 0, 1) * 0.5;
+          ops.push({ k: 'fill', x: cx - 11, y: waterY - 2, w: 22, h: 2, r: 214, g: 238, b: 250, a: 0.22 * rip });
+          ops.push({ k: 'fill', x: cx - 16, y: waterY + 1, w: 32, h: 1, r: 190, g: 222, b: 242, a: 0.26 * rip });
+          ops.push({ k: 'fill', x: cx - 7, y: waterY + 3, w: 14, h: 1, r: 190, g: 222, b: 242, a: 0.2 * rip });
+
+          // braçadas: respingos curtos alternando de lado, no ritmo da fase
+          const phase = pv.swimPhase ?? 0;
+          const stroke = Math.abs(Math.sin(phase));
+          if (stroke > 0.25) {
+            const side = Math.sin(phase) > 0 ? -1 : 1;
+            const reach = 7 + stroke * 4;
+            ops.push({
+              k: 'fill',
+              x: cx + side * reach - 1,
+              y: waterY - 3,
+              w: 3,
+              h: 2,
+              r: 235, g: 248, b: 255,
+              a: 0.3 * stroke,
+            });
+            ops.push({
+              k: 'fill',
+              x: cx - side * (reach * 0.55) - 1,
+              y: waterY - 1,
+              w: 2,
+              h: 1,
+              r: 235, g: 248, b: 255,
+              a: 0.22 * stroke,
+            });
+          }
+
+          // esteira: rastro atrás de quem está se deslocando na água
+          const spd = pv.speed ?? 0;
+          if (spd > 20) {
+            const dir = pv.facing === -1 ? 1 : -1;
+            const strength = clamp((spd - 20) / 130, 0, 1);
+            for (let k = 0; k < 3; k++) {
+              const off = 10 + k * 7;
+              const a = strength * (0.24 - k * 0.055);
+              if (a <= 0.01) continue;
+              ops.push({
+                k: 'fill',
+                x: cx + dir * off - 4,
+                y: waterY - 1 + k,
+                w: 9 + k * 2,
+                h: 1,
+                r: 226, g: 244, b: 255,
+                a,
+              });
+            }
+          }
+        }
       },
     });
   }

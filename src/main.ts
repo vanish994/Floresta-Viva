@@ -4,7 +4,7 @@
  */
 import { World } from './world/world';
 import { Climate, SEASONS } from './world/climate';
-import { Player } from './game/player';
+import { Player, WADE_DEPTH_M } from './game/player';
 import { Input } from './game/input';
 import { TouchControls } from './game/touch';
 import { CanvasRenderer } from './render/CanvasRenderer';
@@ -251,5 +251,22 @@ function updateHud(ops: number) {
   const sediment = world.stats.sandCells;
   el('hud-perf').textContent = `${fps.toFixed(0)} fps · ${world.chunks.size} chunks · ${world.stats.plants} plantas · água ${water} · areia ${sediment} cél. · ${ops} ops · gen ${world.stats.genMs.toFixed(1)} ms · sim ${world.stats.simMs.toFixed(1)} ms${spr}`;
   el('hud-debug').textContent = DEBUG_MODES[debugIdx] ? `debug: ${DEBUG_MODES[debugIdx]}` : 'debug: off (Q alterna)';
+
+  // estado aquático: profundidade/correnteza reais + fôlego
+  const swim = el('hud-swim');
+  const waterHere = player.water;
+  const bars = '▮'.repeat(Math.round(player.stamina * 5)).padEnd(5, '▯');
+  if (player.swimming) {
+    const current = waterHere.currentSpeed >= 0.01 ? ` · corrente ${waterHere.currentSpeed.toFixed(2)} m/s` : ' · água parada';
+    const tired = player.stamina <= 0.05 ? ' · EXAUSTO (flutuando)' : '';
+    swim.textContent = `🏊 nadando · lâmina ${waterHere.depth.toFixed(2)} m${current} · fôlego ${bars}${tired}`;
+    swim.className = player.stamina <= 0.05 ? 'exhausted' : 'swim';
+  } else if (waterHere.depth > WADE_DEPTH_M) {
+    swim.textContent = `💧 vadear · lâmina ${waterHere.depth.toFixed(2)} m · fôlego ${bars}`;
+    swim.className = 'wade';
+  } else {
+    swim.textContent = '';
+    swim.className = '';
+  }
   void Climate;
 }

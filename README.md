@@ -14,7 +14,7 @@ decomposição, erosão, clima, estações) evoluem em frequências separadas do
 ```bash
 npm install
 npm run dev          # abre o jogo (Vite em 0.0.0.0:5173)
-npm test             # 72 testes (determinismo, continuidade, hidrologia, água, erosão, ecologia, tempo, chunks, persistência)
+npm test             # 82 testes (determinismo, continuidade, hidrologia, água, erosão, natação, ecologia, tempo, chunks, persistência)
 npm run preview:world  # validação visual headless: renderiza PNGs reais + mapas de campos
 npm run scenario:water # cenário reproduzível da física da água (volumes + orçamento)
 npm run scenario:erosion # cenário reproduzível de erosão/sedimentação/margens
@@ -30,6 +30,7 @@ npx tsx tools/preview.ts --seed 777  --day 16 --hour 10 --find open   # inverno/
 npx tsx tools/preview.ts --seed 1337 --day 4 --hour 10 --find river --sim 8 --rain 1  # enchente
 npx tsx tools/water-scenario.ts --hours 10 --rain 0.02                # balanço de massa
 npx tsx tools/preview.ts --seed 1337 --day 4 --hour 10 --find river --sim 96   # 96 h de erosão
+npx tsx tools/preview.ts --seed 1337 --day 4 --hour 10 --find water --swim 1   # personagem nadando
 ```
 
 Gera em `.tmp/previews/` uma cena renderizada com as **mesmas ops de desenho do jogo**
@@ -41,13 +42,19 @@ Exemplos commitados em `docs/imagens/`.
 
 | tecla | ação |
 | --- | --- |
-| WASD / setas | mover |
+| WASD / setas | mover (em água funda, nadar) |
 | `Q` | alterna modos de depuração (chunks, elevação, umidade, fluxo, correnteza, solo, vegetação, água, areia, sedimento, nutrientes) |
 | `P` | pausa o relógio do mundo |
 | `F` | derruba a árvore mais próxima (vira liteira; efeito ecológico real) |
 | `G` | planta uma muda da espécie mais adequada ao solo local |
 | `🌧 chuva` | força chuva máxima (para ver o nível dos rios subir e transbordar) |
 | botões do HUD | novo mundo (seed), salvar, debug, pausa, trocar personagem |
+
+Em **água funda** (≥ 0,45 m) o personagem nada: mais lento que andar, com o corpo
+submerso (o sprite é cortado na linha d'água, com ondulação, braçadas e esteira),
+fôlego que cai nadando e volta em terra/água rasa — e a **correnteza real** do
+solver empurra a favor ou contra (nadar rio acima rende menos e cansa mais).
+Água rasa (< 0,45 m) é vadeo. Penhascos e troncos continuam bloqueando.
 
 O jogo salva automaticamente a cada 20 s em `localStorage` (diffs, não o mundo inteiro).
 
@@ -94,6 +101,8 @@ O jogo é jogável no celular (toque), não só no desktop:
 - **Clima/astronomia**: dia de 24 min reais, declinação solar por inclinação axial (23,4°),
   duração do dia variando com a estação, estações configuráveis (28 dias/ano), chuva em
   feixes determinísticos, neve no inverno.
+- **Natação**: água profunda é atravessável nadando (limiar de 0,45 m), com fôlego,
+  correnteza real empurrando o corpo e desenho submerso coerente com a lâmina.
 - **Fauna**: modelo de atividade (alimento/água/abrigo/hora/estação) que já alimenta a
   dispersão de sementes; interfaces `FaunaAgent`/`FaunaSystem` para agentes visuais futuros.
 - **Persistência** versionada em `localStorage` com diffs (plantas removidas/recrutadas,

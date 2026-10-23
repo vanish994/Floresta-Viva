@@ -141,6 +141,12 @@ Load seguro: versão/seed/gerador conferidos; diffs aplicados quando o chunk é 
 ## Camada de jogo e mobile (`src/game/`, `src/main.ts`)
 
 - `input.ts`: teclado (eixos WASD/setas, ações F/G/Q/P).
+- `player.ts`: movimento em terra, vadeo (< 0,45 m) e **natação** (≥ 0,45 m). A água
+  vem do solver (`waterDepth`, `flowX/flowY`): a profundidade escolhe o modo e a
+  correnteza empurra o corpo (fator de escala de jogo, sem alterar a física da água).
+  Fôlego cai nadando e volta em terra; exausto ainda se move devagar (sem soft-lock).
+  `PlayerView` carrega `swimming/submerge/stamina/swimPhase/speed` para o render
+  cortar o sprite na linha d'água, ondular, desenhar braçadas e esteira.
 - `touch.ts`: joystick virtual + botões F/G via Pointer Events; só é exibido com
   `pointer: coarse`. O loop soma/prioriza o eixo de toque sobre o do teclado.
 - `main.ts`: HUD DOM, autosave, e ajustes mobile-first (HUD colapsado em telas

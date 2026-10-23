@@ -100,6 +100,18 @@ aluvial 0,04. Leito de rio/lago infiltra 15–20% do valor da margem.
 Textura inicial de areia por solo (`sandBase`): arenoso 0,85 · aluvial 0,35 ·
 florestal 0,15 · argiloso 0,10 · rochoso 0,03.
 
+## Personagem / natação (`src/game/player.ts`)
+
+| constante | valor | efeito |
+| --- | --- | --- |
+| `SWIM_DEPTH_M` | 0.45 m | acima disso o personagem nada (abaixo, vadea ou anda) |
+| `WADE_DEPTH_M` | 0.15 m | acima disso andar fica lento (vadeo) |
+| `swimSpeed` | 78 px/s | velocidade nadando (terra: 150, vadeando: 82,5) |
+| `exhaustedSwimFactor` | 0.35 | fração da velocidade com fôlego zerado (flutuando) |
+| `currentFactor` | 14 | converte m/s da correnteza em px/s de empurrão (escala de jogo) |
+| `staminaDrain` | 0.032 /s | consumo de fôlego nadando (× até 2,4 contra a correnteza) |
+| `staminaRegenLand` / `staminaRegenShallow` | 0.35 / 0.12 /s | recuperação de fôlego |
+
 ## Vegetação
 
 | parâmetro | padrão | efeito |
