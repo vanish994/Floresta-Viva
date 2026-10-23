@@ -561,6 +561,10 @@ describe('erosão e sedimentação', () => {
     const i = c.cellIdx(4, 4);
     c.sand[i] = 0.93;
     c.sandLayer[i] = 0.06;
+    // um depósito no limiar de classificação (1 cm) não pode virar 0 no save
+    const j = c.cellIdx(7, 7);
+    c.sand[j] = 0.7;
+    c.sandLayer[j] = 0.012;
     c.sandBase[i] = 0.2;
     c.soilBase[i] = SOIL_ALLUVIAL;
     c.soilType[i] = SOIL_SAND;
@@ -587,6 +591,9 @@ describe('erosão e sedimentação', () => {
       expect(c2.soilType[i]).toBe(SOIL_SAND);
       expect(c2.sand[i]).toBeCloseTo(0.93, 1);
       expect(c2.sandLayer[i]).toBeCloseTo(0.06, 1);
+      const j = c2.cellIdx(7, 7);
+      expect(c2.sandLayer[j]).toBeCloseTo(0.012, 2); // ~2 mm de resolução
+      expect(c2.sandLayer[j]).toBeGreaterThanOrEqual(cfg.sandMinLayerMeters);
     });
   });
 
