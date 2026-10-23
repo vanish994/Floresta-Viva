@@ -1,0 +1,21 @@
+{
+  "cell": [
+    19,
+    14
+  ],
+  "maxFrames": 5,
+  "anims": {
+    "idle": 5,
+    "fly": 4,
+    "land": 4,
+    "eat": 4,
+    "sleep": 4
+  },
+  "frameMs": {
+    "idle": 260,
+    "fly": 90,
+    "land": 130,
+    "eat": 190,
+    "sleep": 420
+  }
+}

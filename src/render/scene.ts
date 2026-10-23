@@ -14,7 +14,9 @@ import { clamp, hash2 } from '../core/rng';
 import {
   SPRITES, TREE_FILES, TREE_RECTS, GROUND_TILES, GROUND_TILES_FILE, CLIFF_SOUTH, CLIFF_DIAG, type Rect,
   FRUIT_SHEET, SEED_SHEET, INSECT_SHEET, fruitRect, seedRect, insectRect,
+  FAUNA_SHEETS, faunaRect,
 } from './manifest';
+import { agentView, type Animal } from '../world/fauna';
 import { FRUITS, FRUIT_PIXELS, MAX_FLOWERS, phenoOf, type Insect } from '../world/ecosystem';
 import type { Op, SceneOps } from './ops';
 import { SEASONS } from '../world/climate';
@@ -442,6 +444,22 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
     }
   }
 
+  // ---------- fauna visual (coelho, sapo, ave) ----------
+  for (let cy = Math.floor(ty0 / cfg.chunkTiles); cy <= Math.floor(ty1 / cfg.chunkTiles); cy++) {
+    for (let cx = Math.floor(tx0 / cfg.chunkTiles); cx <= Math.floor(tx1 / cfg.chunkTiles); cx++) {
+      const chunk = world.getChunk(cx, cy);
+      if (!chunk) continue;
+      for (const animal of world.faunaAt(chunk)) {
+        if (animal.x < cam.x - 48 || animal.x > cam.x + cam.w + 48) continue;
+        if (animal.y < cam.y - 64 || animal.y > cam.y + cam.h + 48) continue;
+        items.push({
+          y: animal.y,
+          emit: () => emitAnimal(animal, cam, opts.timeMs, (op) => { ops.push(op); spriteCount++; }),
+        });
+      }
+    }
+  }
+
   if (opts.player) {
     const pv = opts.player;
     items.push({
@@ -812,6 +830,61 @@ function emitInsect(insect: Insect, cam: Camera, timeMs: number, push: (op: Op) 
   }
   if (insect.pollen) {
     push({ k: 'fill', x: dx + px - 3, y: dy + 1, w: 2, h: 2, r: 244, g: 214, b: 92, a: 0.9 });
+  }
+}
+
+/** nº de frames de uma animação da fauna (para escolher o quadro) */
+function faunaFrames(animal: Animal, anim: string): number {
+  const sheet = FAUNA_SHEETS[animal.kind];
+  const frames: Record<string, Record<string, number>> = {
+    rabbit: { idle: 6, walk: 6, run: 5, jump: 5, eat: 6, sleep: 5 },
+    frog: { idle: 4, jump: 4, swim: 5, eat: 4, sleep: 4 },
+    bird: { idle: 5, fly: 4, land: 4, eat: 4, sleep: 4 },
+  };
+  return frames[animal.kind]?.[anim] ?? sheet.maxFrames;
+}
+
+/**
+ * Desenha um animal no mesmo pipeline dos sprites (ordenado por y, mesma
+ * câmera, mesma iluminação). O sprite é 1:1 com o pixel art do jogo: coelho
+ * 21×17, sapo 25×14, ave 18×13 — escala nativa, sem esticar.
+ */
+function emitAnimal(animal: Animal, cam: Camera, timeMs: number, push: (op: Op) => void): void {
+  const sheet = FAUNA_SHEETS[animal.kind];
+  const view = agentView(animal, timeMs, (a) => faunaFrames(animal, a));
+  const rect = faunaRect(sheet, view.anim, view.frame);
+  // escala nativa (1:1): os sprites já foram reduzidos para o tamanho do jogo
+  // (coelho 17 px, sapo 15 px, ave 14 px contra 29 px do personagem) — são
+  // animais pequenos, como devem ser, e ficam nítidos no pixel art
+  const zoom = 1;
+  const dw = rect[2] * zoom;
+  const dh = rect[3] * zoom;
+  const dx = Math.round(animal.x - cam.x - dw / 2);
+  const dy = Math.round(animal.y - cam.y - dh - view.hover);
+  push({
+    k: 'blit',
+    img: sheet.file,
+    sx: rect[0], sy: rect[1], sw: rect[2], sh: rect[3],
+    dx, dy, dw, dh,
+    flip: view.facing === -1,
+  });
+  // sombra de contato (dá peso ao animal; no voo fica menor)
+  const shadowW = view.hover > 0 ? 8 : Math.round(dw * 0.45);
+  push({
+    k: 'fill',
+    x: Math.round(animal.x - cam.x - shadowW / 2),
+    y: Math.round(animal.y - cam.y - 1),
+    w: shadowW, h: view.hover > 0 ? 1 : 2,
+    r: 24, g: 30, b: 20, a: view.hover > 0 ? 0.14 : 0.24,
+  });
+  // sapo na água: linha d'água sobre o corpo (não parece flutuar no seco)
+  if (view.anim === 'swim') {
+    push({
+      k: 'fill',
+      x: dx, y: dy + Math.round(dh * 0.55),
+      w: dw, h: Math.max(1, Math.round(dh * 0.45)),
+      r: 30, g: 86, b: 120, a: 0.3,
+    });
   }
 }
 

@@ -113,6 +113,11 @@ export class Chunk {
   seedBed: import('./ecosystem').SeedEntry[] = [];
   /** pressão de pragas do chunk 0..1 (lagartas) */
   pestPressure = 0;
+  /**
+   * insetos ativos deste chunk (pool do mundo) — leitura barata para a fauna
+   * decidir onde há comida; não é persistido (reconstruído pelo ecossistema).
+   */
+  localInsects?: Array<{ x: number; y: number; kind: string }>;
   /** predadores (joaninhas) por célula 0..1 — reduz pragas */
   predators?: Float32Array;
 

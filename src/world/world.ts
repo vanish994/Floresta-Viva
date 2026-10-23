@@ -29,6 +29,11 @@ import {
 } from './water';
 import type { PlantRecord } from './flora';
 import {
+  seedFauna,
+  stepFauna,
+  type Animal,
+} from './fauna';
+import {
   stepPhenology,
   stepInsects,
   seedInsects,
@@ -66,6 +71,8 @@ export interface WorldStats {
   floweringPlants: number;
   /** chunks fora de carga com estado ecológico guardado (mundo infinito) */
   ecoArchived: number;
+  /** animais visuais ativos (coelhos, sapos, aves) */
+  animals: number;
 }
 
 /** estado de água arquivado quando um chunk é descarregado */
@@ -119,6 +126,7 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
     groundFruits: 0,
     floweringPlants: 0,
     ecoArchived: 0,
+    animals: 0,
   };
   /** orçamento acumulado de água (m³) desde o início da sessão */
   readonly waterBudget: WaterBudget = createWaterBudget();
@@ -136,6 +144,8 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
    * com o arquivo, a fenologia continua e é recuperada no reload.
    */
   private ecoArchive = new Map<string, EcoSnapshot>();
+  /** fauna visual por chunk (pool leve; não vai para o save) */
+  private faunaByChunk = new Map<string, Animal[]>();
   /** lookup de chunk vizinho para insetos/polinização na fronteira */
   private neighborLookup: ChunkLookup = (cellX, cellY) => this.cellAt(cellX, cellY);
   /** água de chunks descarregados — evita que a borda vire uma parede permanente */
@@ -281,6 +291,7 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
         this.storeWaterSnapshot(key, chunk);
         this.storeEcoSnapshot(key, chunk);
         this.insectsByChunk.delete(key);
+        this.faunaByChunk.delete(key);
         this.chunks.delete(key);
       }
     }
@@ -437,6 +448,24 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
           if (arrived) visits.set(insect.targetId, (visits.get(insect.targetId) ?? 0) + 1);
         }
         updatePestPressure(chunk, insects);
+        // a fauna visual lê os insetos locais (comida) e o ambiente do chunk
+        chunk.localInsects = insects.map((ins) => ({ x: ins.x, y: ins.y, kind: ins.kind }));
+        let animals = this.faunaByChunk.get(key);
+        if (!animals) {
+          animals = seedFauna(chunk, cfg, dayFloat, hour, insects);
+          this.faunaByChunk.set(key, animals);
+        }
+        if (animals.length === 0 && insects.length > 0) {
+          animals = seedFauna(chunk, cfg, dayFloat, hour, insects);
+          this.faunaByChunk.set(key, animals);
+        }
+        stepFauna(animals, cfg, insectStep, {
+          worldDay: dayFloat,
+          hour,
+          playerX: this.playerX,
+          playerY: this.playerY,
+          neighbor: this.neighborLookup,
+        });
       }
       this.insectAccumHours -= insectStep;
       insectRuns++;
@@ -470,6 +499,8 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
 
     let insects = 0;
     for (const list of this.insectsByChunk.values()) insects += list.length;
+    let animals = 0;
+    for (const list of this.faunaByChunk.values()) animals += list.length;
     let ground = 0;
     let flowering = 0;
     for (const chunk of this.chunks.values()) {
@@ -479,6 +510,7 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
       }
     }
     this.stats.insects = insects;
+    this.stats.animals = animals;
     this.stats.groundFruits = ground;
     this.stats.floweringPlants = flowering;
     this.stats.ecoArchived = this.ecoArchive.size;
@@ -487,6 +519,11 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
   /** insetos ativos de um chunk (render/debug) */
   insectsAt(chunk: Chunk): Insect[] {
     return this.insectsByChunk.get(chunkKeyStr(chunk.cx, chunk.cy)) ?? [];
+  }
+
+  /** fauna visual ativa de um chunk (render/debug) */
+  faunaAt(chunk: Chunk): Animal[] {
+    return this.faunaByChunk.get(chunkKeyStr(chunk.cx, chunk.cy)) ?? [];
   }
 
   /**
