@@ -16,7 +16,7 @@ import { hash2 } from './core/rng';
 import { SPECIES } from './world/flora';
 import { RainAudio } from './audio/rain';
 
-const DEBUG_MODES: DebugMode[] = [null, 'chunks', 'elevation', 'moisture', 'flow', 'current', 'soil', 'veg', 'water', 'sand', 'sediment', 'nutrients'];
+const DEBUG_MODES: DebugMode[] = [null, 'chunks', 'elevation', 'moisture', 'flow', 'current', 'soil', 'veg', 'water', 'sand', 'sediment', 'eco', 'nutrients'];
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -285,5 +285,44 @@ function updateHud(ops: number) {
     swim.textContent = '';
     swim.className = '';
   }
+  // ecossistema: floração/frutos no chão/insetos + a planta mais próxima
+  const eco = world.stats;
+  const near = nearestPlantInfo();
+  el('hud-eco').textContent =
+    `🌱 florindo ${eco.floweringPlants} · 🍎 no chão ${eco.groundFruits} · 🐝 insetos ${eco.insects}` +
+    (eco.ecoArchived > 0 ? ` · 📦 ${eco.ecoArchived} chunks ativos fora de tela` : '') +
+    (near ? ` · ${near}` : '');
+
   void Climate;
+}
+
+/** resumo da planta mais próxima (estágio, frutos, saúde, pragas) */
+function nearestPlantInfo(): string {
+  const cfg = world.cfg;
+  const cellPx = cfg.simCellTiles * cfg.tileSize;
+  const chunk = world.cellAt(Math.floor(player.x / cellPx), Math.floor(player.y / cellPx));
+  if (!chunk) return '';
+  let best: { d: number; text: string } | null = null;
+  for (const p of chunk.livePlants()) {
+    const d = (p.x - player.x) ** 2 + (p.y - player.y) ** 2;
+    if (d > 90 * 90) continue;
+    if (best && d >= best.d) continue;
+    const sp = SPECIES[p.species];
+    const ph = p.pheno;
+    const stage = ph
+      ? ph.stage === 'flowering'
+        ? `flor (${ph.flowers})`
+        : ph.stage === 'green'
+          ? `frutos verdes (${ph.fruits.length})`
+          : ph.stage === 'ripe'
+            ? `frutos maduros (${ph.fruits.length})`
+            : 'vegetativo'
+      : '—';
+    const health = Math.round((1 - (ph?.pests ?? 0) * 0.45) * 100);
+    best = {
+      d,
+      text: `${sp.name}: ${stage} · saúde ${health}% · pragas ${Math.round((ph?.pests ?? 0) * 100)}%`,
+    };
+  }
+  return best ? best.text : '';
 }

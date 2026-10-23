@@ -152,3 +152,25 @@ Campos por célula: `moisture, litter, humus, nAvail, pAvail, kAvail, pH, microb
   frames aceleram com a velocidade real.
 - Neve: chão/arbustos/árvores trocam de variante quando a máxima do dia < 7,5 °C.
 - Iluminação: tint multiply + escuridão com furo de luz de ~150 px no personagem.
+
+## Ecossistema (`src/world/ecosystem.ts`)
+
+| item | valor | efeito |
+| --- | --- | --- |
+| `MAX_FLOWERS` | 6 | flores por floração de uma planta adulta |
+| `FLOWERING_HOURS` | 12 h (0,5 dia) | duração da antese antes de fechar a floração |
+| `WIND_POLLINATION` | 0.04 | chance de polinização sem inseto (baixa: a visita importa) |
+| `GROUND_FRUIT_HOURS` | 48 h | fruto no chão até decompor (vira liteira + semente) |
+| `SEED_LIFE_HOURS` | 12 dias | semente viável no solo |
+| `RECRUIT_CAP` / `SEED_BED_CAP` | 10 / 24 | tetos por chunk (sem explosão populacional) |
+| `fruitRipenDays` (por espécie) | 0.7–1.6 dias | tempo de maturação do fruto |
+| `fruitHoldDays` (por espécie) | 0.6–1.4 dias | permanência média do fruto maduro antes de cair |
+| `fruitingSeason` (por espécie) | [0..1]⁴ | frutificação por estação (inverno ≈ 0) |
+
+Arquivo de chunks fora de carga: até 192 chunks, 220 plantas por snapshot,
+recuperação de no máximo 20 dias de jogo em ≤ 8 passos (`FF_MAX_HOURS`,
+`FF_STEP_HOURS`, `FF_MAX_STEPS`, `ECO_SNAPSHOT_MAX_PLANTS`).
+
+A queda usa risco acumulado: `1 − exp(−(Δt/hold)·(0,45 + idade²)·chuva)`, com
+`hold` variando por espécie, saúde e por fruto (`holdBias`) — fruto maduro nunca
+fica indefinidamente na planta.

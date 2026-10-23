@@ -53,7 +53,7 @@ em TypeScript + Canvas2D (Vite), reaproveitando 100% dos sprites do pacote.
   `sanitize.ts`
 - `src/game/` — `player.ts`, `input.ts`; `src/main.ts`; `index.html`; `src/ui/style.css`
 - `tools/` — `preview.ts`, `software.ts`, `png.ts`, `gen-manifest.mjs`, `data/*`
-- `tests/` — 10 arquivos, 72 testes
+- `tests/` — 13 arquivos, 107 testes
 - `docs/` — este relatório, `ARQUITETURA.md`, `PARAMETROS.md`, `imagens/`
 
 ## Como funciona a geração por seed e chunks
@@ -226,3 +226,33 @@ Limitações: deltas limitados a ±0,25 m por célula (teto pré-existente), tra
 de uma célula por subpasso com direção cardinal dominante, areia depende de solo
 aluvial/arenoso como fonte, e a queda de árvores por erosão exige erosão local
 profunda acumulada em muitos dias de jogo.
+
+
+---
+
+## Atualização — ecossistema vivo (flores, frutos, sementes, insetos)
+
+A vegetação tinha só idade/saúde: flores eram decoração gerada e não existia
+fruto, queda, semente ou inseto. Agora `src/world/ecosystem.ts` dá a cada planta
+uma fenologia (vegetativo → floração → fruto verde → maduro → queda → fruto no
+chão → semente → muda), acoplada ao clima/umidade/estação e à saúde existente.
+
+Regra central: **fruto maduro cai**. A chance é acumulada (`1 − exp(−(Δt/hold) ·
+(0,45+idade²) · chuva)`), com `hold` variando por espécie, saúde e por fruto —
+nunca um tempo fixo, nunca indefinidamente na árvore.
+
+Polinização é funcional: abelhas e borboletas visitam flores, carregam pólen e
+fertilizam outra flor (vento contribui com 4%); lagartas reduzem folhas/saúde
+(menos flores e frutos) e joaninhas reduzem a pressão de pragas. Tudo com tetos
+populacionais e simulação só perto do jogador.
+
+Frutos/sementes/insetos têm sprites próprios gerados em pixel art
+(`tools/gen-eco-sprites.ts`), ancorados na geometria real da copa
+(`treeGeometry`), com escala por porte (7/5/4/3 px). Fenologia, frutos no chão,
+sementes e pragas são persistidos no save v2.
+
+Medições: 94 testes aprovados (12 novos de ecossistema), cenário de 96 h
+mostrando floração → 3 polinizações → 3 frutos maduros → 3 quedas, e teste
+visual headless em `docs/imagens/ecossistema.png` (+ zoom). Limitações: insetos
+não são salvos (reconstruídos), herbivoria é pressão agregada, e só as espécies
+com planta compatível frutificam.

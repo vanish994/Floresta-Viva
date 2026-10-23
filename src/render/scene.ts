@@ -13,13 +13,15 @@ import { plantSize } from '../world/ecology';
 import { clamp, hash2 } from '../core/rng';
 import {
   SPRITES, TREE_FILES, TREE_RECTS, GROUND_TILES, GROUND_TILES_FILE, CLIFF_SOUTH, CLIFF_DIAG, type Rect,
+  FRUIT_SHEET, SEED_SHEET, INSECT_SHEET, fruitRect, seedRect, insectRect,
 } from './manifest';
+import { FRUITS, FRUIT_PIXELS, MAX_FLOWERS, phenoOf, type Insect } from '../world/ecosystem';
 import type { Op, SceneOps } from './ops';
 import { SEASONS } from '../world/climate';
 
 export type DebugMode =
   | null | 'chunks' | 'elevation' | 'moisture' | 'flow' | 'current' | 'soil' | 'veg' | 'water'
-  | 'sand' | 'sediment' | 'nutrients';
+  | 'sand' | 'sediment' | 'eco' | 'nutrients';
 
 export interface Camera {
   x: number;
@@ -354,8 +356,89 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
       }
       for (const p of chunk.livePlants()) {
         if (p.x < cam.x - 96 || p.x > cam.x + cam.w + 96 || p.y < cam.y - 200 || p.y > cam.y + cam.h + 96) continue;
-        items.push({ y: p.y, emit: () => emitTree(world, chunk, p, cam, opts, season, snowy, (op) => { ops.push(op); spriteCount++; }) });
+        items.push({
+          y: p.y,
+          emit: () => {
+            const ctx = { world, chunk, plant: p, cam, opts, season, snowy };
+            emitTree(world, chunk, p, cam, opts, season, snowy, (op) => { ops.push(op); spriteCount++; });
+            // floração e frutos acompanham a copa (desenhados depois da árvore,
+            // com âncora na mesma base — parecem parte da planta, não ícones)
+            emitFlowers(ctx, (op) => { ops.push(op); spriteCount++; });
+            emitFruitsOnPlant(ctx, (op) => { ops.push(op); spriteCount++; });
+          },
+        });
       }
+      // frutos caídos no chão e sementes: entram na ordenação por y (chão)
+      for (const gf of chunk.groundFruits) {
+        if (gf.x < cam.x - 32 || gf.x > cam.x + cam.w + 32 || gf.y < cam.y - 32 || gf.y > cam.y + cam.h + 32) continue;
+        items.push({
+          y: gf.y,
+          emit: () => {
+            const def = FRUITS[gf.fruit] ?? FRUITS.maca;
+            const px = FRUIT_PIXELS[def.size];
+            const r = fruitRect(gf.fruit, true);
+            const bob = Math.min(1.5, gf.dropOffset);
+            ops.push({
+              k: 'blit', img: FRUIT_SHEET,
+              sx: r[0], sy: r[1], sw: r[2], sh: r[3],
+              dx: Math.round(gf.x - cam.x - px / 2),
+              dy: Math.round(gf.y - cam.y - px + bob),
+              dw: px, dh: px,
+            });
+            // sombra de contato (indica que está no chão)
+            ops.push({ k: 'fill', x: Math.round(gf.x - cam.x - px / 2), y: Math.round(gf.y - cam.y), w: px, h: 1, r: 24, g: 32, b: 20, a: 0.25 });
+            spriteCount++;
+            // frutos velhos ganham marcas de decomposição
+            if (gf.ageHours > 24 * 4) {
+              ops.push({ k: 'fill', x: Math.round(gf.x - cam.x - 1), y: Math.round(gf.y - cam.y - 2), w: 2, h: 1, r: 60, g: 45, b: 25, a: 0.5 });
+            }
+          },
+        });
+      }
+      for (const seed of chunk.seedBed) {
+        if (seed.x < cam.x - 16 || seed.x > cam.x + cam.w + 16 || seed.y < cam.y - 16 || seed.y > cam.y + cam.h + 16) continue;
+        items.push({
+          y: seed.y,
+          emit: () => {
+            const r = seedRect(FRUIT_SHEET_ORDER_FOR_SEEDS(seed.species));
+            ops.push({
+              k: 'blit', img: SEED_SHEET,
+              sx: r[0], sy: r[1], sw: r[2], sh: r[3],
+              dx: Math.round(seed.x - cam.x - 3),
+              dy: Math.round(seed.y - cam.y - 5),
+              dw: 6, dh: 6,
+            });
+            spriteCount++;
+          },
+        });
+      }
+    }
+  }
+
+  // ---------- insetos (pool do mundo, perto do jogador) ----------
+  const insectLists: Array<{ chunk: Chunk; list: Insect[] }> = [];
+  {
+    const n = cfg.chunkTiles / cfg.simCellTiles;
+    const cx0 = Math.floor(tx0 / cfg.chunkTiles);
+    const cx1 = Math.floor(tx1 / cfg.chunkTiles);
+    const cy0 = Math.floor(ty0 / cfg.chunkTiles);
+    const cy1 = Math.floor(ty1 / cfg.chunkTiles);
+    void n;
+    for (let cy = cy0; cy <= cy1; cy++) {
+      for (let cx = cx0; cx <= cx1; cx++) {
+        const chunk = world.getChunk(cx, cy);
+        if (!chunk) continue;
+        const list = world.insectsAt(chunk);
+        if (list.length) insectLists.push({ chunk, list });
+      }
+    }
+  }
+  for (const { list } of insectLists) {
+    for (const insect of list) {
+      items.push({
+        y: insect.y,
+        emit: () => emitInsect(insect, cam, opts.timeMs, (op) => { ops.push(op); spriteCount++; }),
+      });
     }
   }
 
@@ -538,6 +621,15 @@ function cy0(chunk: Chunk, cfg: { chunkTiles: number }, ty: number): number {
   return chunk.cy * cfg.chunkTiles;
 }
 
+/** semente desenhada para a espécie (cai no primeiro art disponível) */
+function FRUIT_SHEET_ORDER_FOR_SEEDS(species: number): string {
+  const sp = SPECIES[species];
+  const fruit = sp?.fruit;
+  if (fruit === 'maca' || fruit === 'cereja' || fruit === 'uva') return fruit;
+  if (fruit) return 'framboesa';
+  return 'maca';
+}
+
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
@@ -545,6 +637,39 @@ function lerp(a: number, b: number, t: number): number {
 function smoothstepLocal(e0: number, e1: number, x: number): number {
   const t = clamp((x - e0) / (e1 - e0), 0, 1);
   return t * t * (3 - 2 * t);
+}
+
+/**
+ * Geometria do sprite da árvore (mesma conta usada no desenho). Frutos e flores
+ * são ancorados NESTE retângulo, para caírem dentro da copa e não no tronco.
+ */
+export interface TreeGeometry {
+  size: number;
+  dw: number;
+  dh: number;
+  /** topo da copa (px de mundo) */
+  topY: number;
+  /** base do tronco (px de mundo) */
+  baseY: number;
+  /** centro horizontal (px de mundo) */
+  cx: number;
+}
+
+export function treeGeometry(world: World, chunk: Chunk, p: PlantRecord, season: number, snowy: boolean): TreeGeometry | null {
+  const cfg = world.cfg;
+  const sp = SPECIES[p.species];
+  const size = plantSize(p, chunk, cfg, world.clock.dayFloat);
+  if (size <= 0.03) return null;
+  const lookKey = (['spring', 'summer', 'autumn', 'winter'] as const)[season];
+  let look = sp.look[lookKey];
+  if (snowy && look !== 'snow' && sp.deciduous) look = 'winter';
+  if (snowy && !sp.deciduous && season === 3) look = 'snow';
+  const rects = TREE_RECTS[sp.size];
+  const r = rects[p.variant % rects.length];
+  const scale = (0.42 + 0.58 * clamp(size, 0, 1)) * (sp.size === 'bigger' ? 1 : sp.size === 'big' ? 0.92 : 0.8);
+  const dw = Math.round(r[2] * scale);
+  const dh = Math.round(r[3] * scale);
+  return { size, dw, dh, topY: p.y - dh + 2, baseY: p.y + 2, cx: p.x };
 }
 
 function emitTree(
@@ -574,6 +699,120 @@ function emitTree(
   const dx = Math.round(p.x - cam.x - dw / 2);
   const dy = Math.round(p.y - cam.y - dh + 2);
   push({ k: 'blit', img: file, sx: r[0], sy: r[1], sw: r[2], sh: r[3], dx, dy, dw, dh, flip: p.variant % 2 === 0 });
+}
+
+interface PlantDrawContext {
+  world: World;
+  chunk: Chunk;
+  plant: PlantRecord;
+  cam: Camera;
+  opts: SceneOptions;
+  season: number;
+  snowy: boolean;
+}
+
+/**
+ * Flores sobre a copa: só nas plantas que estão de fato florindo (fenologia).
+ * A posição usa a âncora da copa e um jitter determinístico por flor — nada de
+ * todas as flores no mesmo pixel.
+ */
+function emitFlowers(ctx: PlantDrawContext, push: (op: Op) => void): void {
+  const pheno = ctx.plant.pheno;
+  if (!pheno || pheno.stage !== 'flowering' || pheno.flowers <= 0) return;
+  if (pheno.dormant > 0) return;
+  const sp = SPECIES[ctx.plant.species];
+  const geo = treeGeometry(ctx.world, ctx.chunk, ctx.plant, ctx.season, ctx.snowy);
+  if (!geo || geo.size < 0.25) return;
+  const count = Math.min(pheno.flowers, MAX_FLOWERS);
+  const sprite = sp.size === 'small' ? SPRITES.sflower_a : SPRITES.flower_a;
+  const frame = sprite.frames[Math.floor(ctx.opts.timeMs / (sprite.frameMs ?? 400)) % sprite.frames.length];
+  for (let k = 0; k < count; k++) {
+    const r1 = hash2(ctx.world.cfg.seed ^ 0x71f, ctx.plant.id + k, pheno.flowers, 640);
+    const r2 = hash2(ctx.world.cfg.seed ^ 0x71f, ctx.plant.id - k, pheno.flowers, 641);
+    // dentro do retângulo da copa: topo + 20%..55% da altura desenhada
+    const x = geo.cx + (r1 - 0.5) * geo.dw * 0.62;
+    const y = geo.topY + geo.dh * (0.2 + 0.35 * r2);
+    const scale = sp.size === 'small' ? 0.5 : 0.62;
+    const dw = Math.max(4, Math.round(frame[2] * scale));
+    const dh = Math.max(4, Math.round(frame[3] * scale));
+    push({
+      k: 'blit', img: sprite.file,
+      sx: frame[0], sy: frame[1], sw: frame[2], sh: frame[3],
+      dx: Math.round(x - ctx.cam.x - dw / 2),
+      dy: Math.round(y - ctx.cam.y - dh),
+      dw, dh,
+    });
+  }
+}
+
+/**
+ * Frutos na copa: verdes enquanto amadurecem, maduros depois. O tamanho em
+ * pixels vem do porte do fruto (árvore grande → fruto visível); a posição é
+ * distribuída pela copa pela âncora de cada fruto.
+ */
+function emitFruitsOnPlant(ctx: PlantDrawContext, push: (op: Op) => void): void {
+  const pheno = ctx.plant.pheno;
+  if (!pheno || pheno.fruits.length === 0) return;
+  const sp = SPECIES[ctx.plant.species];
+  if (!sp.fruit) return;
+  const def = FRUITS[sp.fruit];
+  if (!def) return;
+  const geo = treeGeometry(ctx.world, ctx.chunk, ctx.plant, ctx.season, ctx.snowy);
+  if (!geo || geo.size < 0.2) return;
+  const px = Math.max(3, Math.round(FRUIT_PIXELS[def.size] * (0.7 + 0.45 * geo.size)));
+  for (const fruit of pheno.fruits) {
+    const ripe = fruit.age >= 1;
+    const r = fruitRect(sp.fruit, ripe);
+    // pendurado NA COPA: ox/oy (-1..1) mapeiam para dentro da silhueta
+    // desenhada (20%..80% da largura, 30%..65% da altura a partir do topo),
+    // e o fruto é desenhado DEPOIS da árvore para aparecer sobre as folhas
+    const x = geo.cx + fruit.ox * geo.dw * 0.3;
+    const y = geo.topY + geo.dh * (0.3 + 0.35 * (fruit.oy * 0.5 + 0.5));
+    // fruto imaturo fica menor (cresce até amadurecer)
+    const grow = ripe ? 1 : 0.6 + 0.4 * fruit.age;
+    const dw = Math.max(3, Math.round(px * grow));
+    const dh = dw;
+    push({
+      k: 'blit', img: FRUIT_SHEET,
+      sx: r[0], sy: r[1], sw: r[2], sh: r[3],
+      dx: Math.round(x - ctx.cam.x - dw / 2),
+      dy: Math.round(y - ctx.cam.y - dh),
+      dw, dh,
+    });
+    // brilho sutil no maduro (leitura à distância sem inventar cor forte)
+    if (ripe && def.size === 'big') {
+      push({
+        k: 'fill',
+        x: Math.round(x - ctx.cam.x - dw / 2),
+        y: Math.round(y - ctx.cam.y - dh),
+        w: 1, h: 1, r: 255, g: 244, b: 214, a: 0.5,
+      });
+    }
+  }
+}
+
+/** inseto: sprite de 2 frames, com sombra/altura de voo (polinizadores voam) */
+function emitInsect(insect: Insect, cam: Camera, timeMs: number, push: (op: Op) => void): void {
+  const flying = insect.kind === 'bee' || insect.kind === 'butterfly';
+  const frame: 0 | 1 = Math.floor((timeMs / (flying ? 90 : 220) + insect.phase) % 2) as 0 | 1;
+  const r = insectRect(insect.kind, frame);
+  const px = flying ? 10 : 11;
+  const hover = flying ? Math.sin(timeMs / 180 + insect.phase) * 1.6 : 0;
+  const dx = Math.round(insect.x - cam.x - px / 2);
+  const dy = Math.round(insect.y - cam.y - px - 6 + hover);
+  push({
+    k: 'blit', img: INSECT_SHEET,
+    sx: r[0], sy: r[1], sw: r[2], sh: r[3],
+    dx, dy, dw: px, dh: px,
+    flip: Math.cos(insect.phase * 0.3) < 0,
+  });
+  if (flying) {
+    // sombra no chão: dá altura de voo sem inventar física
+    push({ k: 'fill', x: dx + 3, y: Math.round(insect.y - cam.y + 2), w: 5, h: 1, r: 20, g: 26, b: 16, a: 0.22 });
+  }
+  if (insect.pollen) {
+    push({ k: 'fill', x: dx + px - 3, y: dy + 1, w: 2, h: 2, r: 244, g: 214, b: 92, a: 0.9 });
+  }
 }
 
 function heatColor(mode: string, chunk: Chunk, ci: number): [number, number, number] {
@@ -611,6 +850,23 @@ function heatColor(mode: string, chunk: Chunk, ci: number): [number, number, num
       // fração de areia da superfície: azul (nada) → amarelo (praia)
       const t = clamp(chunk.sand[ci], 0, 1);
       return [Math.round(40 + t * 200), Math.round(90 + t * 130), Math.round(190 - t * 130)];
+    }
+    case 'eco': {
+      // verde = florindo, amarelo = frutos maduros, vermelho = pragas
+      const pheno = chunk.plantsInCell(ci % chunk.n, (ci / chunk.n) | 0);
+      let flower = 0, ripe = 0, pests = 0;
+      for (const p of pheno) {
+        const ph = p.pheno;
+        if (!ph) continue;
+        if (ph.stage === 'flowering') flower++;
+        ripe += ph.fruits.filter((f) => f.age >= 1).length;
+        pests = Math.max(pests, ph.pests);
+      }
+      return [
+        Math.round(60 + pests * 190),
+        Math.round(70 + Math.min(1, flower / 3) * 170),
+        Math.round(60 + Math.min(1, ripe / 4) * 120),
+      ];
     }
     case 'sediment': {
       // carga suspensa relativa ao máximo configurado

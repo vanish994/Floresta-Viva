@@ -106,6 +106,16 @@ export class Chunk {
   decor: DecorItem[] = [];
   removedDecor = new Set<number>();
 
+  // --- ecossistema (frutos caídos, sementes, pragas) ---
+  /** frutos no chão (caíram das plantas) — vivem até decompor virar semente */
+  groundFruits: import('./ecosystem').GroundFruit[] = [];
+  /** banco de sementes superficial do chunk */
+  seedBed: import('./ecosystem').SeedEntry[] = [];
+  /** pressão de pragas do chunk 0..1 (lagartas) */
+  pestPressure = 0;
+  /** predadores (joaninhas) por célula 0..1 — reduz pragas */
+  predators?: Float32Array;
+
   /** relógios de simulação deste chunk (horas de jogo), por frequência */
   lastWaterHour = 0;
   /** relógio do balanço hídrico do solo (frequência própria) */
@@ -113,11 +123,15 @@ export class Chunk {
   lastBioHour = 0;
   lastErosionHour = 0;
   lastBankHour = 0;
+  /** última hora de jogo em que a fenologia deste chunk avançou de verdade */
+  lastEcoHour = 0;
   dirty = false;
   /** solo modificado pela simulação (precisa ir para o save) */
   soilDirty = false;
   /** água modificada pela física (precisa ir para o save) */
   waterDirty = false;
+  /** fenologia/pragas/frutos no chão mudaram (precisa ir para o save) */
+  ecoDirty = false;
   ready = false;
 
   constructor(cx: number, cy: number, cfg: WorldConfig) {

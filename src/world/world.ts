@@ -28,6 +28,21 @@ import {
   type WaterRegion,
 } from './water';
 import type { PlantRecord } from './flora';
+import {
+  stepPhenology,
+  stepInsects,
+  seedInsects,
+  updatePestPressure,
+  createEcoBudget,
+  snapshotEco,
+  restoreEco as restoreEcoState,
+  fastForwardEco,
+  type ChunkLookup,
+  type EcoBudget,
+  type EcoContext,
+  type EcoSnapshot,
+  type Insect,
+} from './ecosystem';
 
 export interface WorldStats {
   chunksLoaded: number;
@@ -43,6 +58,14 @@ export interface WorldStats {
   sedimentMs: number;
   /** células classificadas como areia nos chunks carregados */
   sandCells: number;
+  /** insetos ativos na região simulada */
+  insects: number;
+  /** frutos no chão nos chunks carregados */
+  groundFruits: number;
+  /** plantas florindo / com fruto nos chunks carregados */
+  floweringPlants: number;
+  /** chunks fora de carga com estado ecológico guardado (mundo infinito) */
+  ecoArchived: number;
 }
 
 /** estado de água arquivado quando um chunk é descarregado */
@@ -74,6 +97,10 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
       sand?: number[];
       types?: number[];
       layer?: number[];
+      pheno?: Array<[number, number, number, number, number, Array<[number, number, number, number, number, number]>, number]>;
+      fruits?: Array<[number, string, number, number, number, number, number]>;
+      seeds?: Array<[number, number, number, number, number]>;
+      pests?: number;
     }
   >;
   /** chamado após cada chunk gerado (usado para aplicar diffs persistidos) */
@@ -88,11 +115,29 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
     waterMs: 0,
     sedimentMs: 0,
     sandCells: 0,
+    insects: 0,
+    groundFruits: 0,
+    floweringPlants: 0,
+    ecoArchived: 0,
   };
   /** orçamento acumulado de água (m³) desde o início da sessão */
   readonly waterBudget: WaterBudget = createWaterBudget();
   /** orçamento acumulado de erosão/sedimentos (m somados por célula) */
   readonly sedimentBudget: SedimentBudget = createSedimentBudget();
+  /** orçamento acumulado do ecossistema (polinizações, quedas, sementes) */
+  readonly ecoBudget: EcoBudget = createEcoBudget();
+  /** insetos ativos por chunk (pool leve, reconstruído; não vai para o save) */
+  private insectsByChunk = new Map<string, Insect[]>();
+  /** visitas de polinizadores por planta no intervalo do passo de biologia */
+  private flowerVisits = new Map<number, number>();
+  /**
+   * Estado ecológico de chunks que saíram de carga. Sem isso, o mundo
+   * "reiniciaria" (plantas em vegetativo) toda vez que o jogador voltasse —
+   * com o arquivo, a fenologia continua e é recuperada no reload.
+   */
+  private ecoArchive = new Map<string, EcoSnapshot>();
+  /** lookup de chunk vizinho para insetos/polinização na fronteira */
+  private neighborLookup: ChunkLookup = (cellX, cellY) => this.cellAt(cellX, cellY);
   /** água de chunks descarregados — evita que a borda vire uma parede permanente */
   private waterArchive = new Map<string, WaterSnapshot>();
 
@@ -234,6 +279,8 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
       const dx = chunk.cx - center.cx, dy = chunk.cy - center.cy;
       if (Math.max(Math.abs(dx), Math.abs(dy)) > unload) {
         this.storeWaterSnapshot(key, chunk);
+        this.storeEcoSnapshot(key, chunk);
+        this.insectsByChunk.delete(key);
         this.chunks.delete(key);
       }
     }
@@ -253,11 +300,14 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
       chunk.lastBioHour = this.clock.totalHours;
       chunk.lastErosionHour = this.clock.totalHours;
       chunk.lastBankHour = this.clock.totalHours;
+      chunk.lastEcoHour = this.clock.totalHours;
       this.chunks.set(key, chunk);
       this.stats.chunksGenerated++;
       this.onChunkGenerated?.(chunk);
       // água simulada é mais recente que a geração: restaura ao recarregar
       this.restoreWaterSnapshot(key, chunk);
+      // ecossistema: retoma o estado salvo e avança o tempo que passou fora
+      this.restoreEcoSnapshot(key, chunk);
       made.push(chunk);
     }
     this.stats.chunksLoaded = this.chunks.size;
@@ -308,6 +358,8 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
     this.runWaterPhysics(gameHours);
     // morfologia fluvial (erosão/deposição) e margens, com a água já atualizada
     this.runMorphology(gameHours);
+    // ecossistema: insetos (passo curto) e fenologia (passo da biologia)
+    this.runEcosystem(gameHours);
 
     this.stats.simMs = this.stats.simMs * 0.9 + (performanceNow() - t0) * 0.1;
     let plants = 0;
@@ -319,6 +371,123 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
   private waterAccumHours = 0;
   private erosionAccumHours = 0;
   private bankAccumHours = 0;
+
+  /**
+   * Ecossistema: insetos (polinização, herbivoria, predação) em passo curto e
+   * fenologia das plantas (floração → fruto → queda) no passo da biologia.
+   *
+   * Orçamento mobile-first: insetos só existem perto do jogador (raio de 1
+   * chunk) e são reconstruídos a partir da flora local — nada pesado no save.
+   */
+  private ecoAccumHours = 0;
+  private insectAccumHours = 0;
+
+  private runEcosystem(gameHours: number): void {
+    if (!(gameHours > 0)) return;
+    const cfg = this.cfg;
+    const dayFloat = this.clock.dayFloat;
+    const season = this.climate.seasonIndex(dayFloat);
+    const hour = this.clock.hour;
+    const center = chunkOfPx(this.playerX, this.playerY, cfg);
+    const day = Math.floor(dayFloat);
+
+    // --- insetos: passo curto (0,25 h de jogo), só na vizinhança do jogador ---
+    this.insectAccumHours += gameHours;
+    const insectStep = 0.25;
+    let insectRuns = 0;
+    while (this.insectAccumHours >= insectStep && insectRuns < 4) {
+      for (const chunk of this.chunks.values()) {
+        const near = Math.abs(chunk.cx - center.cx) <= 1 && Math.abs(chunk.cy - center.cy) <= 1;
+        const key = chunkKeyStr(chunk.cx, chunk.cy);
+        if (!near) {
+          this.insectsByChunk.delete(key); // longe: sem agentes ativos (custo zero)
+          continue;
+        }
+        let insects = this.insectsByChunk.get(key);
+        if (!insects) {
+          insects = seedInsects(chunk, cfg, hour, day);
+          this.insectsByChunk.set(key, insects);
+        }
+        // a população acompanha a flora local: sem insetos, tenta repovoar
+        // (abelhas só aparecem quando há flor — é o ciclo positivo/negativo)
+        if (insects.length === 0) {
+          insects = seedInsects(chunk, cfg, hour, day);
+          this.insectsByChunk.set(key, insects);
+        }
+        const visits = this.flowerVisits;
+        const before = new Map<string, { pollen: boolean; target: number }>();
+        for (const insect of insects) {
+          before.set(`${insect.kind}:${insect.id}`, { pollen: insect.pollen, target: insect.targetId });
+        }
+        stepInsects(insects, cfg, {
+          worldDay: dayFloat,
+          hour,
+          detailed: true,
+          budget: this.ecoBudget,
+          neighbors: this.neighborLookup,
+        });
+        // registra a planta cuja flor RECEBEU pólen neste passo (só quando o
+        // inseto que chegou já vinha carregando pólen): é isso que fecha a
+        // floração e vira fruto verde na fenologia
+        for (const insect of insects) {
+          if (insect.targetId < 0 || !insect.pollen) continue;
+          const prev = before.get(`${insect.kind}:${insect.id}`);
+          if (!prev) continue;
+          const arrived = prev.target === insect.targetId && prev.pollen;
+          if (arrived) visits.set(insect.targetId, (visits.get(insect.targetId) ?? 0) + 1);
+        }
+        updatePestPressure(chunk, insects);
+      }
+      this.insectAccumHours -= insectStep;
+      insectRuns++;
+    }
+    if (insectRuns >= 4) this.insectAccumHours = 0;
+
+    // --- fenologia: no passo da biologia (3 h) -------------------------------
+    this.ecoAccumHours += gameHours;
+    let runs = 0;
+    while (this.ecoAccumHours >= cfg.periodBioHours && runs < 2) {
+      const ctx: EcoContext = {
+        cfg,
+        climate: this.climate,
+        worldDay: dayFloat,
+        season,
+        hourFraction: this.clock.hour / 24,
+        humidity: this.climate.meanWetness(),
+      };
+      for (const chunk of this.chunks.values()) {
+        // fenologia só na área visível/próxima (fora dela o custo não compensa;
+        // quando o jogador se aproxima, o passo retoma e o estado é consistente)
+        if (Math.abs(chunk.cx - center.cx) > 2 || Math.abs(chunk.cy - center.cy) > 2) continue;
+        stepPhenology(chunk, cfg.periodBioHours, ctx, this.ecoBudget, this.flowerVisits);
+        chunk.lastEcoHour = this.clock.totalHours;
+      }
+      this.flowerVisits.clear();
+      this.ecoAccumHours -= cfg.periodBioHours;
+      runs++;
+    }
+    if (runs >= 2) this.ecoAccumHours = 0;
+
+    let insects = 0;
+    for (const list of this.insectsByChunk.values()) insects += list.length;
+    let ground = 0;
+    let flowering = 0;
+    for (const chunk of this.chunks.values()) {
+      ground += chunk.groundFruits.length;
+      for (const p of chunk.livePlants()) {
+        if (p.pheno && (p.pheno.stage === 'flowering' || p.pheno.fruits.length > 0)) flowering++;
+      }
+    }
+    this.stats.insects = insects;
+    this.stats.groundFruits = ground;
+    this.stats.floweringPlants = flowering;
+    this.stats.ecoArchived = this.ecoArchive.size;
+  }
+
+  /** insetos ativos de um chunk (render/debug) */
+  insectsAt(chunk: Chunk): Insect[] {
+    return this.insectsByChunk.get(chunkKeyStr(chunk.cx, chunk.cy)) ?? [];
+  }
 
   /**
    * Erosão/deposição e margens. Roda só na região ativa (a mesma da água):
@@ -432,6 +601,56 @@ export class World implements Neighborhood, WaterRegion, SedimentRegion {
     chunk.surfaceInput.set(snap.surfaceInput);
     this.waterArchive.delete(key);
     chunk.waterDirty = true;
+  }
+
+  /**
+   * Arquiva o estado ecológico do chunk que sai de carga (fenologia, frutos no
+   * chão, sementes, pragas) com o instante de jogo. Cap de 192 chunks para a
+   * memória não crescer sem limite num mundo infinito.
+   */
+  private storeEcoSnapshot(key: string, chunk: Chunk): void {
+    // o instante do snapshot é o do ÚLTIMO passo ecológico real do chunk: se ele
+    // ficou carregado mas longe do jogador, esse tempo também é recuperado
+    const snap = snapshotEco(chunk, chunk.lastEcoHour);
+    if (
+      snap.plants.size === 0 &&
+      snap.groundFruits.length === 0 &&
+      snap.seedBed.length === 0 &&
+      snap.recruited.length === 0 &&
+      snap.removed.length === 0 &&
+      snap.pestPressure < 0.001
+    ) {
+      this.ecoArchive.delete(key);
+      return;
+    }
+    this.ecoArchive.set(key, snap);
+    while (this.ecoArchive.size > 192) {
+      const oldest = this.ecoArchive.keys().next().value;
+      if (oldest === undefined) break;
+      this.ecoArchive.delete(oldest);
+    }
+  }
+
+  /** Restaura e avança o estado ecológico de um chunk recém-gerado. */
+  private restoreEcoSnapshot(key: string, chunk: Chunk): void {
+    const snap = this.ecoArchive.get(key);
+    if (!snap) return;
+    this.ecoArchive.delete(key);
+    const elapsed = this.clock.totalHours - snap.hour;
+    chunk.lastEcoHour = this.clock.totalHours;
+    if (elapsed <= 0.01) {
+      restoreEcoState(chunk, snap);
+      return;
+    }
+    const ctx: EcoContext = {
+      cfg: this.cfg,
+      climate: this.climate,
+      worldDay: this.clock.dayFloat,
+      season: this.climate.seasonIndex(this.clock.dayFloat),
+      hourFraction: this.clock.hour / 24,
+      humidity: this.climate.meanWetness(),
+    };
+    fastForwardEco(chunk, snap, elapsed, ctx);
   }
 
   private bioAccum = new Map<string, number>();

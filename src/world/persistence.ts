@@ -28,6 +28,13 @@ interface ChunkDiff {
   types?: number[];
   /** espessura do depósito arenoso em 0..255 → 0..0,5 m (passo ~2 mm) */
   layer?: number[];
+  /** fenologia por planta + pragas (só plantas que já têm estado ecológico) */
+  pheno?: Array<[number, number, number, number, number, Array<[number, number, number, number, number, number]>, number]>;
+  /** frutos no chão e sementes (estado ecológico persistente) */
+  fruits?: Array<[number, string, number, number, number, number, number]>;
+  seeds?: Array<[number, number, number, number, number]>;
+  /** pressão de pragas do chunk */
+  pests?: number;
 }
 
 interface SaveData {
@@ -58,7 +65,7 @@ export function saveWorld(world: World, storage: Storage = localStorage): boolea
     };
     let count = 0;
     for (const [key, chunk] of world.chunks) {
-      if (!chunk.dirty && !chunk.waterDirty) continue;
+      if (!chunk.dirty && !chunk.waterDirty && !chunk.ecoDirty) continue;
       if (count > 220) break;
       const diff: ChunkDiff = {
         removed: [...chunk.removedPlants],
@@ -74,6 +81,39 @@ export function saveWorld(world: World, storage: Storage = localStorage): boolea
         diff.types = Array.from(chunk.soilType);
         diff.layer = quantizeLayer(chunk);
       }
+      // ecossistema: fenologia (poucas plantas têm estado), frutos no chão e sementes
+      const pheno: NonNullable<ChunkDiff['pheno']> = [];
+      for (const plant of [...chunk.plants, ...chunk.recruitedPlants]) {
+        const p = plant.pheno;
+        if (!p) continue;
+        if (p.stage === 'vegetative' && p.fruits.length === 0 && p.pests < 0.01 && p.flowers === 0) continue;
+        pheno.push([
+          plant.id,
+          STAGE_CODES[p.stage],
+          Math.round(p.timer),
+          p.flowers,
+          Math.round(p.pests * 100),
+          p.fruits.map((f) => [Math.round(f.age * 1000), f.pollinated ? 1 : 0, Math.round(f.ripeHours), Math.round(f.ox * 1000), Math.round(f.oy * 1000), Math.round(f.holdBias * 1000)]),
+          Math.round(p.dormant),
+        ]);
+      }
+      if (pheno.length > 0) diff.pheno = pheno;
+      if (chunk.groundFruits.length > 0) {
+        diff.fruits = chunk.groundFruits.map((g) => [
+          Math.round(g.x),
+          g.fruit,
+          g.species,
+          f2b(g.y),
+          Math.round(g.ageHours),
+          Math.round(g.seedKey),
+          Math.round(g.dropOffset * 1000),
+        ]);
+      }
+      if (chunk.seedBed.length > 0) {
+        diff.seeds = chunk.seedBed.map((s2) => [Math.round(s2.x), Math.round(s2.y), s2.species, Math.round(s2.ageHours), Math.round(s2.seedKey)]);
+      }
+      if (chunk.pestPressure > 0.001) diff.pests = Math.round(chunk.pestPressure * 100);
+      chunk.ecoDirty = false;
       data.chunks[key] = diff;
       count++;
     }
@@ -135,6 +175,49 @@ export function applyChunkDiffs(world: World, chunk: Chunk): void {
   }
   if (diffs.sand) dequantizeSand(chunk, diffs.sand);
   if (diffs.layer) dequantizeLayer(chunk, diffs.layer);
+  if (diffs.pheno) {
+    const byId = new Map<number, (typeof chunk.plants)[number]>();
+    for (const p of chunk.plants) byId.set(p.id, p);
+    for (const p of chunk.recruitedPlants) byId.set(p.id, p);
+    for (const row of diffs.pheno) {
+      const plant = byId.get(row[0]);
+      if (!plant) continue;
+      const [id, stage, timer, flowers, pests, fruits, dormant] = row;
+      void id;
+      plant.pheno = {
+        stage: STAGE_NAMES[stage] ?? 'vegetative',
+        timer,
+        flowers,
+        pests: pests / 100,
+        dormant,
+        fruits: fruits.map((f) => ({
+          age: f[0] / 1000,
+          pollinated: f[1] === 1,
+          ripeHours: f[2],
+          ox: f[3] / 1000,
+          oy: f[4] / 1000,
+          holdBias: f[5] / 1000,
+        })),
+      };
+    }
+  }
+  if (diffs.fruits) {
+    chunk.groundFruits = diffs.fruits.map((g) => ({
+      id: g[0],
+      fruit: g[1],
+      species: g[2],
+      x: g[0],
+      y: b2f(g[3]),
+      ageHours: g[4],
+      seedKey: g[5],
+      dropOffset: g[6] / 1000,
+      slot: { age: 1, pollinated: true, ripeHours: g[4], ox: 0, oy: 0, holdBias: 1 },
+    }));
+  }
+  if (diffs.seeds) {
+    chunk.seedBed = diffs.seeds.map((s2) => ({ x: s2[0], y: s2[1], species: s2[2], ageHours: s2[3], seedKey: s2[4] }));
+  }
+  if (diffs.pests !== undefined) chunk.pestPressure = diffs.pests / 100;
   chunk.waterDirty = false;
   chunk.dirty = false;
 }
@@ -219,6 +302,11 @@ function dequantizeLayer(chunk: Chunk, data: number[]): void {
     chunk.sandLayer[i] = (v / 255) * SAND_LAYER_SAVE_MAX;
   }
 }
+
+const STAGE_CODES: Record<string, number> = { vegetative: 0, flowering: 1, green: 2, ripe: 3 };
+const STAGE_NAMES: Array<'vegetative' | 'flowering' | 'green' | 'ripe'> = ['vegetative', 'flowering', 'green', 'ripe'];
+const f2b = (v: number): number => Math.max(0, Math.min(65535, Math.round(v)));
+const b2f = (v: number): number => v;
 
 function quantizeSoil(chunk: Chunk): number[] {
   const out: number[] = [];

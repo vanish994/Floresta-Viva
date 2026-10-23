@@ -56,6 +56,44 @@ export const GROUND_TILES = {
 } satisfies Record<string, Rect>;
 export const GROUND_TILES_FILE = 'Miscellaneous/tiles.png';
 
+// --- ecossistema: frutos, sementes e insetos ---------------------------------
+/** folha de frutos: 8 colunas × 16 px; cada fruto ocupa 2 células (maduro, verde) */
+export const FRUIT_SHEET = 'Fruits/fruits.png';
+export const FRUIT_SHEET_COLS = 8;
+/** ordem dos frutos na folha — mesma de `FRUIT_ORDER` em world/ecosystem.ts */
+export const FRUIT_SHEET_ORDER = [
+  'maca', 'pera', 'cereja', 'ameixa', 'uva', 'acai', 'amora', 'framboesa',
+  'mirtilo', 'gooseberry', 'cassis', 'physalis', 'morango',
+] as const;
+/**
+ * Recorte de um fruto na folha. O gerador desenha primeiro a versão MADURA e
+ * depois a verde (célula par = maduro, ímpar = verde).
+ */
+export function fruitRect(id: string, ripe: boolean): Rect {
+  const idx = FRUIT_SHEET_ORDER.indexOf(id as (typeof FRUIT_SHEET_ORDER)[number]);
+  const cell = (idx < 0 ? 0 : idx) * 2 + (ripe ? 0 : 1);
+  const col = cell % FRUIT_SHEET_COLS;
+  const row = Math.floor(cell / FRUIT_SHEET_COLS);
+  return [col * 16, row * 16, 16, 16];
+}
+
+export const SEED_SHEET = 'Fruits/seeds.png';
+/** ordem das sementes na folha (8×8 cada) */
+export const SEED_ORDER = ['maca', 'cereja', 'uva', 'framboesa'] as const;
+export function seedRect(id: string): Rect {
+  const idx = SEED_ORDER.indexOf(id as (typeof SEED_ORDER)[number]);
+  return [(idx < 0 ? 0 : idx) * 8, 0, 8, 8];
+}
+
+export const INSECT_SHEET = 'Insects/insects.png';
+/** ordem dos insetos na folha (2 frames de 12×12 cada) */
+export const INSECT_ORDER = ['bee', 'butterfly', 'ladybug', 'caterpillar'] as const;
+export function insectRect(kind: string, frame: 0 | 1): Rect {
+  const idx = INSECT_ORDER.indexOf(kind as (typeof INSECT_ORDER)[number]);
+  const col = (idx < 0 ? 0 : idx) * 2 + frame;
+  return [col * 12, 0, 12, 12];
+}
+
 export const SPRITES: Record<string, SpriteDef> = {
   water_deep: F('Water/WaterTilesAnimated/Ocean_Water_Anim.png', [[32, 32, 32, 32], [96, 32, 32, 32], [160, 32, 32, 32], [224, 32, 32, 32]], 'bottom', 260),
   water_shallow: F('Water/WaterTilesAnimated/Ocean_Water_40%_Anim.png', [[32, 32, 32, 32], [96, 32, 32, 32], [160, 32, 32, 32], [224, 32, 32, 32]], 'bottom', 260),
@@ -104,6 +142,9 @@ export function allAssetFiles(): string[] {
   const set = new Set<string>([GROUND_TILES_FILE]);
   for (const f of Object.values(TREE_FILES)) for (const p of Object.values(f)) set.add(p as string);
   set.add('Cliffs/Cliffs_Grass.png');
+  set.add(FRUIT_SHEET);
+  set.add(SEED_SHEET);
+  set.add(INSECT_SHEET);
   for (const s of Object.values(SPRITES)) set.add(s.file);
   return [...set];
 }
