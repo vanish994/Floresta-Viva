@@ -1,0 +1,58 @@
+name: Add rain audio asset
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/add-rain-audio.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  add-rain-audio:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Pixabay rain audio
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p assets/audio
+          python - <<'PY'
+          import re
+          import urllib.request
+          from pathlib import Path
+
+          page = 'https://pixabay.com/sound-effects/nature-chuva-na-primavera-online-audio-convertercom-27904/'
+          req = urllib.request.Request(page, headers={'User-Agent': 'Mozilla/5.0'})
+          html = urllib.request.urlopen(req, timeout=30).read().decode('utf-8', 'ignore')
+          urls = re.findall(r'https://cdn\.pixabay\.com/audio/[^\"\\']+?\.mp3', html)
+          if not urls:
+              raise SystemExit('Could not find the MP3 URL on the Pixabay page')
+          url = urls[0].replace('\\u0026', '&')
+          print('Downloading:', url)
+          out = Path('assets/audio/rain-spring.mp3')
+          urllib.request.urlretrieve(url, out)
+          if out.stat().st_size < 10000:
+              raise SystemExit('Downloaded file is unexpectedly small')
+          print('Saved', out, out.stat().st_size, 'bytes')
+          PY
+
+      - name: Commit rain audio
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add assets/audio/rain-spring.mp3
+          if git diff --cached --quiet; then
+            echo 'Rain audio is already present.'
+            exit 0
+          fi
+          git commit -m 'feat(audio): add spring rain ambience'
+          git push
