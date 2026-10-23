@@ -7,7 +7,7 @@ export class RainAudio {
   private unlocked = false;
   private current = 0;
 
-  constructor(src = 'assets/audio/rain-spring.mp3') {
+  constructor(src = new URL('audio/rain-spring.mp3', import.meta.env.BASE_URL).href) {
     this.audio = new Audio(src);
     this.audio.loop = true;
     this.audio.preload = 'auto';
