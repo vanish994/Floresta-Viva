@@ -159,6 +159,17 @@ Equilíbrio da umidade = `0,34 + 0,26·sazonal + 0,10·floresta + 0,08·água �
 | `CORPSE_HOURS` | 1,0 h (~60 s reais) | carcaça imóvel no mundo antes de virar solo |
 | `CORPSE_DECAY_HOURS` | 0,45 h | início da decomposição visível (restos/moscas) |
 
+### Direções da fauna (`src/world/fauna.ts` + `src/render/manifest.ts`)
+
+| item | valor | efeito |
+| --- | --- | --- |
+| `facingFromVector(dx, dy, anterior)` | histerese de 25% | eixo dominante decide N/S/L/O; sem piscar na diagonal |
+| `Animal.facingDir` | `n · s · e · w` | linha do spritesheet usada no render |
+| `faunaRow(sheet, anim, dir)` | linha `anim:dir` | resolve a linha e se precisa espelhar |
+| `faunaFlip(sheet, anim, dir)` | só sem arte da direção | ave (folha de direção única) usa espelho |
+| `alias` (manifesto) | ex.: `swim→walk`, `attack→strike` | estado sem arte própria usa a linha existente |
+| células | coelho 24×21 · sapo 24×19 · cobra 30×21 · ave 19×14 | 1:1, dentro de ~1 tile de 32 px |
+
 ### Camada visual da fauna (`src/render/scene.ts`)
 
 | item | valor | efeito |

@@ -14,7 +14,7 @@ import { clamp, hash2 } from '../core/rng';
 import {
   SPRITES, TREE_FILES, TREE_RECTS, GROUND_TILES, GROUND_TILES_FILE, CLIFF_SOUTH, CLIFF_DIAG, type Rect,
   FRUIT_SHEET, SEED_SHEET, INSECT_SHEET, fruitRect, seedRect, insectRect,
-  FAUNA_SHEETS, faunaRect, faunaFrameCount, faunaHasAnim,
+  FAUNA_SHEETS, faunaRect, faunaFrameCount, faunaHasAnim, faunaFlip,
 } from './manifest';
 import {
   agentView,
@@ -22,6 +22,7 @@ import {
   CORPSE_DECAY_HOURS,
   type Animal,
   type FaunaAnim,
+  type Facing4,
 } from '../world/fauna';
 import { FRUITS, FRUIT_PIXELS, MAX_FLOWERS, phenoOf, type Insect } from '../world/ecosystem';
 import type { Op, SceneOps } from './ops';
@@ -864,7 +865,10 @@ function emitAnimal(animal: Animal, cam: Camera, timeMs: number, push: (op: Op) 
   const cx = cam.x + cam.w / 2;
   const cy = cam.y + cam.h / 2;
   const near = Math.hypot(animal.x - cx, animal.y - cy) < 420;
-  const rect = faunaRect(sheet, anim, near ? view.frame : 0);
+  const dir: Facing4 = view.dir;
+  const rect = faunaRect(sheet, anim, near ? view.frame : 0, dir);
+  // espelha SÓ quando a folha não tem aquela direção desenhada (ave)
+  const flip = faunaFlip(sheet, anim, dir);
 
   const dead = animal.state === 'dead';
   // 0..1 — quanto a carcaça já se decompôs (CORPSE_HOURS = tempo total no mundo)
@@ -884,7 +888,7 @@ function emitAnimal(animal: Animal, cam: Camera, timeMs: number, push: (op: Op) 
     img: sheet.file,
     sx: rect[0], sy: rect[1], sw: rect[2], sh: rect[3],
     dx, dy, dw, dh,
-    flip: view.facing === -1,
+    flip,
     alpha: fade,
   });
 
@@ -922,7 +926,7 @@ function emitAnimal(animal: Animal, cam: Camera, timeMs: number, push: (op: Op) 
 
   if (near) {
     // --- sapo na água: ondulação (não parece que está andando sobre ela) ---
-    if (anim === 'swim') {
+    if (animal.state === 'swim' || animal.state === 'seek_water' && animal.kind === 'frog') {
       push({
         k: 'fill',
         x: dx, y: dy + Math.round(dh * 0.55),
@@ -952,10 +956,22 @@ function emitAnimal(animal: Animal, cam: Camera, timeMs: number, push: (op: Op) 
     if (!dead && (anim === 'run' || anim === 'jump') && animal.kind !== 'bird' && Math.hypot(animal.vx, animal.vy) > 20) {
       const kick = Math.abs(Math.sin(animal.animPhase * 2.2));
       if (kick > 0.45) {
-        const back = view.facing === -1 ? 1 : -1;
+        // poeira ATRÁS do bicho, no sentido oposto ao da direção desenhada
+        const bx = dir === 'e' ? -1 : dir === 'w' ? 1 : 0;
+        const by = dir === 's' ? -1 : dir === 'n' ? 1 : 0;
         const a = 0.22 * kick;
-        push({ k: 'fill', x: gx + back * Math.round(dw * 0.3), y: gy - 2, w: 2, h: 1, r: 196, g: 176, b: 132, a });
-        push({ k: 'fill', x: gx + back * Math.round(dw * 0.55), y: gy - 4, w: 1, h: 1, r: 196, g: 176, b: 132, a: a * 0.7 });
+        push({
+          k: 'fill',
+          x: gx + bx * Math.round(dw * 0.3) - (by !== 0 ? 1 : 0),
+          y: gy - 2 + by,
+          w: 2, h: 1, r: 196, g: 176, b: 132, a,
+        });
+        push({
+          k: 'fill',
+          x: gx + bx * Math.round(dw * 0.55) - (by !== 0 ? 2 : 0),
+          y: gy - 4 + by * 2,
+          w: 1, h: 1, r: 196, g: 176, b: 132, a: a * 0.7,
+        });
       }
     }
 
@@ -971,8 +987,10 @@ function emitAnimal(animal: Animal, cam: Camera, timeMs: number, push: (op: Op) 
     // --- bote da cobra: brilho no focinho no instante do ataque ------------
     if (anim === 'attack' && !dead) {
       const tick = Math.sin(timeMs / 45) > 0 ? 1 : 0;
-      const fx = gx + (view.facing === -1 ? -Math.round(dw * 0.32) : Math.round(dw * 0.32));
-      push({ k: 'fill', x: fx, y: dy + Math.round(dh * 0.5), w: 2, h: 1, r: 250, g: 226, b: 168, a: tick ? 0.75 : 0.35 });
+      // brilho na CABEÇA do bote: a direção desenhada indica onde ela está
+      const hx = dir === 'e' ? Math.round(dw * 0.32) : dir === 'w' ? -Math.round(dw * 0.32) : 0;
+      const hy = dir === 's' ? Math.round(dh * 0.35) : dir === 'n' ? -Math.round(dh * 0.25) : Math.round(dh * 0.5) - 6;
+      push({ k: 'fill', x: gx + hx - 1, y: dy + hy, w: 2, h: 1, r: 250, g: 226, b: 168, a: tick ? 0.75 : 0.35 });
     }
 
     // --- carcaça: restos escuros e moscas (decomposição visível) -----------

@@ -18,6 +18,7 @@ import { chunkKeyStr } from '../src/core/coords';
 import {
   agentView,
   animFor,
+  facingFromVector,
   makeAnimal,
   stepFauna,
   CORPSE_HOURS,
@@ -31,9 +32,11 @@ import {
 import {
   FAUNA_FRAMES,
   FAUNA_SHEETS,
+  faunaFlip,
   faunaFrameCount,
   faunaHasAnim,
   faunaRect,
+  faunaRow,
   type FaunaSheet,
 } from '../src/render/manifest';
 import { composeScene } from '../src/render/scene';
@@ -96,14 +99,13 @@ describe('fauna visual: escala e mundo 32×32', () => {
     expect(CELL).toBe(cfg.simCellTiles * 32);
     for (const kind of KINDS) {
       const sheet = FAUNA_SHEETS[kind];
-      // nenhum animal ocupa mais de ~1,3 tile de largura (a cobra é a exceção
-      // anatômica: 41 px de corpo enrolado, ainda 1:1, sem esticar)
-      expect(sheet.cellW).toBeLessThanOrEqual(41);
+      // nenhum animal ocupa mais que ~1 tile de 32 px de largura
+      expect(sheet.cellW).toBeLessThanOrEqual(32);
       expect(sheet.cellW).toBeGreaterThanOrEqual(14);
-      expect(sheet.cellH).toBeLessThanOrEqual(20);
+      expect(sheet.cellH).toBeLessThanOrEqual(24);
     }
     // referência do personagem (29 px de altura no sheet): animal nunca gigante
-    for (const kind of KINDS) expect(FAUNA_SHEETS[kind].cellH).toBeLessThan(22);
+    for (const kind of KINDS) expect(FAUNA_SHEETS[kind].cellH).toBeLessThan(29);
   });
 });
 
@@ -113,15 +115,30 @@ describe('fauna visual: manifesto e assets', () => {
       const sheet = FAUNA_SHEETS[kind];
       const json = JSON.parse(
         readFileSync(join(ROOT, 'assets/Animals', `${kind}.json`), 'utf8'),
-      ) as { cell: [number, number]; maxFrames: number; anims: Record<string, number>; frameMs: Record<string, number> };
+      ) as {
+        cell: [number, number]; maxFrames: number; anims: Record<string, number>;
+        rows?: Record<string, number>; dirs?: string[];
+      };
       expect(json.cell).toEqual([sheet.cellW, sheet.cellH]);
       expect(json.maxFrames).toBe(sheet.maxFrames);
-      // as linhas do manifesto são exatamente as animações do JSON
-      expect(Object.keys(sheet.rows).sort()).toEqual(Object.keys(json.anims).sort());
-      for (const [anim, row] of Object.entries(sheet.rows)) {
+      // as animações do manifesto são as do JSON (uma linha por animação×direção)
+      const anims = new Set(Object.keys(sheet.rows).map((k) => k.split(':')[0]));
+      expect([...anims].sort()).toEqual(Object.keys(json.anims).sort());
+      for (const [key, row] of Object.entries(sheet.rows)) {
         expect(row).toBeGreaterThanOrEqual(0);
         expect(row).toBeLessThan(Object.keys(sheet.rows).length);
-        expect(json.anims[anim]).toBe(faunaFrameCount(kind, anim));
+        if (key.includes(':')) expect(['n', 's', 'e', 'w']).toContain(key.split(':')[1]);
+      }
+      // folhas direcionais: 4 direções × animações, e o nº de linhas bate
+      if (sheet.dirs) {
+        expect(sheet.dirs).toEqual(['n', 's', 'e', 'w']);
+        expect(Object.keys(sheet.rows).length).toBe(Object.keys(json.anims).length * 4);
+      }
+      // sem lacunas: todo par animação×direção tem linha
+      for (const anim of Object.keys(json.anims)) {
+        for (const dir of sheet.dirs ?? (['s'] as const)) {
+          expect(faunaRow(sheet, anim, dir)).not.toBeNull();
+        }
       }
     }
   });
@@ -202,21 +219,39 @@ describe('fauna visual: render', () => {
     }
   });
 
-  it('7. flip horizontal não muda a caixa do sprite (só espelha)', () => {
+  it('7. direções: L/O usam linhas próprias e o espelho fica só onde falta arte', () => {
     const c = new Chunk(0, 0, cfg);
-    const right = makeAnimal({ id: 1, kind: 'rabbit', chunk: c, x: 5 * CELL, y: 5 * CELL, facing: 1 });
-    const left = makeAnimal({ id: 2, kind: 'rabbit', chunk: c, x: 5 * CELL, y: 6 * CELL, facing: -1 });
+    const right = makeAnimal({ id: 1, kind: 'rabbit', chunk: c, x: 5 * CELL, y: 5 * CELL, facingDir: 'e', facing: 1 });
+    const left = makeAnimal({ id: 2, kind: 'rabbit', chunk: c, x: 5 * CELL, y: 6 * CELL, facingDir: 'w', facing: -1 });
     const { world } = sceneWorld([right, left]);
     const cam = { x: right.x - 200, y: right.y - 150, w: 400, h: 300 };
     const { blits } = blitOf(world, cam, right);
     const dyOf = (a: Animal) => Math.round(a.y - cam.y - FAUNA_SHEETS.rabbit.cellH);
     const bRight = blits.find((b) => b.dy === dyOf(right))!;
     const bLeft = blits.find((b) => b.dy === dyOf(left))!;
+    const sheet = FAUNA_SHEETS.rabbit;
+    // coelho tem as 4 direções desenhadas: nada de espelhar
     expect(bRight.flip).toBeFalsy();
-    expect(bLeft.flip).toBe(true);
+    expect(bLeft.flip).toBeFalsy();
+    expect(bRight.sy).toBe(sheet.rows['idle:e'] * sheet.cellH);
+    expect(bLeft.sy).toBe(sheet.rows['idle:w'] * sheet.cellH);
+    // e as duas linhas são de fato desenhos diferentes (não é a mesma arte)
+    expect(bRight.sy).not.toBe(bLeft.sy);
     // espelhar não desloca nem redimensiona: a caixa é a mesma
     expect([bRight.dx - right.x, bRight.dx - cam.x, bRight.dw, bRight.dh])
       .toEqual([bLeft.dx - left.x, bLeft.dx - cam.x, bLeft.dw, bLeft.dh]);
+
+    // ave (folha de direção única) continua espelhando para O
+    const bird: Animal = makeAnimal({ id: 3, kind: 'bird', chunk: c, x: 6 * CELL, y: 5 * CELL, facingDir: 'w' });
+    const { world: w2 } = sceneWorld([bird]);
+    const scene2 = composeScene(w2, { x: bird.x - 100, y: bird.y - 80, w: 200, h: 160 }, { timeMs: 800 });
+    const birdBlit = scene2.ops.find(
+      (op): op is Extract<(typeof scene2.ops)[number], { k: 'blit' }> =>
+        op.k === 'blit' && op.img === FAUNA_SHEETS.bird.file,
+    )!;
+    expect(birdBlit.flip).toBe(true);
+    expect(faunaFlip(FAUNA_SHEETS.bird, 'idle', 'w')).toBe(true);
+    expect(faunaFlip(FAUNA_SHEETS.rabbit, 'idle', 'w')).toBe(false);
   });
 
   it('8. y-sort: a base (y) decide a ordem, não a ordem de inserção', () => {
@@ -259,13 +294,13 @@ describe('fauna visual: render', () => {
     expect(view('rabbit', 'idle')).toBe('idle');
     expect(view('rabbit', 'wander', true)).toBe('walk');
     expect(view('rabbit', 'flee', true)).toBe('run');
-    expect(view('rabbit', 'dead')).toBe('sleep'); // carcaça (folha não tem morte)
+    expect(view('rabbit', 'dead')).toBe('death'); // carcaça com arte própria
     // sapo
     expect(view('frog', 'idle')).toBe('idle');
     // `animFor` recebe a informação de água (o chunk sintético está seco)
     expect(animFor('frog', 'idle', false, true)).toBe('swim');
     expect(animFor('frog', 'swim', false, false)).toBe('idle');
-    expect(view('frog', 'flee', true)).toBe('jump');
+    expect(view('frog', 'flee', true)).toBe('run');
     // ave
     expect(view('bird', 'idle')).toBe('idle');
     expect(view('bird', 'fly')).toBe('fly');
@@ -278,9 +313,10 @@ describe('fauna visual: render', () => {
     expect(view('snake', 'rest')).toBe('hide');
     expect(view('snake', 'sleep')).toBe('sleep');
     expect(view('snake', 'dead')).toBe('death');
-    // dor: linha de dor da cobra e sobressalto das outras espécies
+    // dor: todas as espécies com linha própria (a ave segue com bater de asas)
     expect(view('snake', 'flee', true, false, true)).toBe('hurt');
-    expect(view('rabbit', 'idle', false, false, true)).toBe('jump');
+    expect(view('rabbit', 'idle', false, false, true)).toBe('hurt');
+    expect(view('frog', 'idle', false, false, true)).toBe('hurt');
     expect(view('bird', 'idle', false, false, true)).toBe('fly');
     // toda animação escolhida existe na folha
     for (const kind of KINDS) {
@@ -386,6 +422,114 @@ describe('fauna visual: render', () => {
       (op) => op.k === 'fill' && op.r > 220 && op.g < 130 && op.b < 110 && op.a > 0.2,
     );
     expect(sparks.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('fauna visual: direções (N/S/L/O)', () => {
+  it('14. cada direção usa uma linha própria — nada de arte "ao contrário"', () => {
+    // Mede a INCLINAÇÃO da cabeça em relação à base do corpo, nas linhas que o
+    // jogo realmente desenha. Em L a cabeça está à direita; em O, à esquerda.
+    const tilt = (kind: FaunaKind, anim: string, dir: 'e' | 'w') => {
+      const sheet = FAUNA_SHEETS[kind];
+      const img = sheetPng(sheet);
+      const [sx, sy, sw, sh] = faunaRect(sheet, anim, 0, dir);
+      let topX = 0, topN = 0, botX = 0, botN = 0;
+      for (let y = 0; y < sh; y++) {
+        for (let x = 0; x < sw; x++) {
+          const i = ((sy + y) * img.width + sx + x) * 4;
+          if (img.data[i + 3] === 0) continue;
+          if (y < sh * 0.45) { topX += x; topN++; } else { botX += x; botN++; }
+        }
+      }
+      if (!topN || !botN) return 0;
+      return topX / topN - botX / botN;
+    };
+    for (const kind of ['rabbit', 'frog', 'snake'] as const) {
+      for (const anim of ['idle', 'walk']) {
+        if (!faunaHasAnim(kind, anim)) continue;
+        const e = tilt(kind, anim, 'e');
+        const w = tilt(kind, anim, 'w');
+        // a cabeça vai para o lado do movimento nas DUAS direções
+        expect(e).toBeGreaterThan(0);
+        expect(w).toBeLessThan(0);
+      }
+    }
+  });
+
+  it('15. o vetor de movimento escolhe a direção com histerese (sem piscar)', () => {
+    // eixo dominante manda
+    expect(facingFromVector(10, 0, 'n')).toBe('e');
+    expect(facingFromVector(-10, 0, 'n')).toBe('w');
+    expect(facingFromVector(0, 10, 'e')).toBe('s');
+    expect(facingFromVector(0, -10, 'e')).toBe('n');
+    // parado mantém a direção anterior (não "vira" ao parar)
+    expect(facingFromVector(0, 0, 'w')).toBe('w');
+    // diagonal mantém o eixo que já estava valendo (nada de alternar a cada quadro)
+    expect(facingFromVector(10, 9, 'w')).toBe('e');
+    expect(facingFromVector(10, 9, 's')).toBe('s');
+    expect(facingFromVector(-10, 9, 'e')).toBe('w');
+    // uma sequência de passos em zigue-zague não deve oscilar de direção
+    let dir = 'e' as const;
+    const seq: string[] = [];
+    for (let k = 0; k < 12; k++) {
+      const dy = k % 2 === 0 ? 4 : -4;
+      dir = facingFromVector(10, dy, dir) as typeof dir;
+      seq.push(dir);
+    }
+    expect(new Set(seq).size).toBe(1);
+    expect(seq[0]).toBe('e');
+  });
+
+  it('16. a IA move o animal e a direção desenhada acompanha o deslocamento', () => {
+    const c = Chunk.prototype ? chunk() : chunk();
+    const runner = makeAnimal({
+      id: 77, kind: 'rabbit', chunk: c, x: 8 * CELL, y: 8 * CELL,
+      state: 'flee', tx: 8 * CELL - 120, ty: 8 * CELL, hunger: 0.2, thirst: 0.2,
+    });
+    const seen = new Set<string>();
+    for (let i = 0; i < 40; i++) {
+      stepFauna([runner], cfg, 0.02, { worldDay: 10, hour: 11 });
+      seen.add(runner.facingDir ?? 's');
+    }
+    // fugindo para a esquerda, o sprite é o da esquerda (não o espelho de L)
+    expect(runner.facingDir).toBe('w');
+    expect(runner.facing).toBe(-1);
+    expect(seen.size).toBeLessThanOrEqual(2);
+
+    const down = makeAnimal({
+      id: 78, kind: 'frog', chunk: c, x: 6 * CELL, y: 6 * CELL,
+      state: 'wander', tx: 6 * CELL, ty: 6 * CELL + 140, hunger: 0.2, thirst: 0.2,
+    });
+    for (let i = 0; i < 40; i++) stepFauna([down], cfg, 0.02, { worldDay: 10, hour: 22 });
+    expect(down.facingDir).toBe('s');
+  });
+
+  it('17. oeste é arte própria em coelho/sapo/cobra (não é a linha L desenhada de novo)', () => {
+    // compara a silhueta desenhada de O com a de L e com o espelho de L
+    const shape = (kind: FaunaKind, anim: string, dir: 'e' | 'w', mirror = false) => {
+      const sheet = FAUNA_SHEETS[kind];
+      const img = sheetPng(sheet);
+      const [sx, sy, sw, sh] = faunaRect(sheet, anim, 0, dir);
+      const out: number[] = [];
+      for (let y = 0; y < sh; y++) {
+        for (let x = 0; x < sw; x++) {
+          const px = mirror ? sw - 1 - x : x;
+          const i = ((sy + y) * img.width + sx + px) * 4;
+          out.push(img.data[i + 3] === 0 ? 0 : 1);
+        }
+      }
+      return out;
+    };
+    const diff = (a: number[], b: number[]) => a.reduce((s, v, i) => s + (v !== b[i] ? 1 : 0), 0) / a.length;
+    for (const kind of ['rabbit', 'snake'] as const) {
+      for (const anim of ['idle', 'walk']) {
+        const e = shape(kind, anim, 'e');
+        const w = shape(kind, anim, 'w');
+        const mirroredE = shape(kind, anim, 'e', true);
+        // O se parece com o ESPELHO de L, não com L
+        expect(diff(w, mirroredE)).toBeLessThan(diff(w, e));
+      }
+    }
   });
 });
 

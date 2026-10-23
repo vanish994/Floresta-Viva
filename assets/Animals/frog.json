@@ -1,21 +1,61 @@
 {
   "cell": [
-    27,
-    15
+    24,
+    19
   ],
-  "maxFrames": 5,
+  "maxFrames": 4,
+  "dirs": [
+    "n",
+    "s",
+    "e",
+    "w"
+  ],
   "anims": {
     "idle": 4,
+    "walk": 4,
+    "run": 4,
     "jump": 4,
-    "swim": 5,
     "eat": 4,
-    "sleep": 4
+    "sleep": 4,
+    "hurt": 4,
+    "death": 4
   },
-  "frameMs": {
-    "idle": 260,
-    "jump": 110,
-    "swim": 150,
-    "eat": 190,
-    "sleep": 420
-  }
+  "rows": {
+    "idle:n": 0,
+    "idle:s": 1,
+    "idle:e": 2,
+    "idle:w": 3,
+    "walk:n": 4,
+    "walk:s": 5,
+    "walk:e": 6,
+    "walk:w": 7,
+    "run:n": 8,
+    "run:s": 9,
+    "run:e": 10,
+    "run:w": 11,
+    "jump:n": 12,
+    "jump:s": 13,
+    "jump:e": 14,
+    "jump:w": 15,
+    "eat:n": 16,
+    "eat:s": 17,
+    "eat:e": 18,
+    "eat:w": 19,
+    "sleep:n": 20,
+    "sleep:s": 21,
+    "sleep:e": 22,
+    "sleep:w": 23,
+    "hurt:n": 24,
+    "hurt:s": 25,
+    "hurt:e": 26,
+    "hurt:w": 27,
+    "death:n": 28,
+    "death:s": 29,
+    "death:e": 30,
+    "death:w": 31
+  },
+  "mirroredDirs": {
+    "w": []
+  },
+  "source": "tools/data/frog-dir-reference.png"
 }

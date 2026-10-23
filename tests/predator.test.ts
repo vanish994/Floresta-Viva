@@ -21,7 +21,7 @@ import {
   MAX_CHASE_HOURS,
   type Animal,
 } from '../src/world/fauna';
-import { FAUNA_SHEETS, faunaRect } from '../src/render/manifest';
+import { FAUNA_SHEETS, faunaRect, faunaHasAnim } from '../src/render/manifest';
 import { composeScene } from '../src/render/scene';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -95,15 +95,19 @@ describe('cobra: sprites e escala', () => {
     }
     expect(transparent).toBeGreaterThan(0); // fundo transparente real
     expect(partial).toBe(0); // alpha binário (sem halo)
-    // só animações que existem no asset
+    // só animações que existem no asset, nas QUATRO direções desenhadas
     for (const anim of ['idle', 'move', 'attack', 'hide', 'death', 'hurt', 'sleep']) {
-      expect(sheet.rows[anim]).toBeDefined();
-      const r = faunaRect(sheet, anim, 0);
-      expect(r[2]).toBeGreaterThan(0);
-      expect(r[3]).toBeGreaterThan(0);
+      expect(faunaHasAnim('snake', anim)).toBe(true);
+      for (const dir of ['n', 's', 'e', 'w'] as const) {
+        const r = faunaRect(sheet, anim, 0, dir);
+        expect(r[2]).toBeGreaterThan(0);
+        expect(r[3]).toBeGreaterThan(0);
+      }
     }
-    // escala compatível: menor que o coelho em altura de célula, mas visível
-    expect(sheet.cellH).toBeLessThanOrEqual(FAUNA_SHEETS.rabbit.cellH + 8);
+    // peso de predador: 10 animações × 4 direções numa folha só
+    expect(Object.keys(sheet.rows).length).toBe(40);
+    // escala compatível: mesma faixa de célula do coelho, mas visível
+    expect(Math.abs(sheet.cellH - FAUNA_SHEETS.rabbit.cellH)).toBeLessThanOrEqual(2);
     expect(sheet.cellH).toBeGreaterThan(10);
   });
 });

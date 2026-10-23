@@ -18,7 +18,9 @@
     "visual:eco": "tsx tools/eco-visual.ts",
     "sprites:eco": "tsx tools/gen-eco-sprites.ts",
     "sprites:fauna": "tsx tools/extract-fauna-sprites.ts",
-    "visual:fauna": "tsx tools/fauna-visual.ts"
+    "visual:fauna": "tsx tools/fauna-visual.ts",
+    "sprites:dirs": "tsx tools/extract-direction-sprites.ts",
+    "visual:dirs": "tsx tools/fauna-directions.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

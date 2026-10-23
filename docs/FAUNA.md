@@ -47,6 +47,11 @@ Resultado:
 | sapo | 27×15 | idle 4 · jump 4 · swim 5 · eat 4 · sleep 4 | `assets/Animals/frog.png` |
 | ave | 19×14 | idle 5 · fly 4 · land 4 · eat 4 · sleep 4 | `assets/Animals/bird.png` |
 
+> **Atualização (direções)**: coelho, sapo e cobra foram re-extraídos das
+> pranchas direcionais e agora têm célula 24×21, 24×19 e 30×21 com 4 direções
+> desenhadas — ver §6.3. A tabela acima descreve a primeira extração (histórico).
+> A ave permanece nesta folha.
+
 Escala: **1:1** com o pixel art do jogo (sem esticar). Coelho tem 59% da altura
 do personagem, sapo 52% e ave 48% — animais pequenos, como pedido; nada de
 sprites gigantes.
@@ -285,14 +290,73 @@ Regras aplicadas:
 | `CORPSE_HOURS` | 1,0 h (~60 s reais) | tempo que a carcaça permanece no mundo |
 | `CORPSE_DECAY_HOURS` | 0,45 h | a partir daqui aparecem restos/moscas |
 
+### Direções (atualização): N, S, L, O
+
+As três pranchas novas (`tools/data/{rabbit,frog,snake}-dir-reference.png`)
+trazem **4 direções desenhadas** por animação. Elas foram extraídas por
+`tools/extract-direction-sprites.ts` (`npm run sprites:dirs`):
+
+| espécie | célula | animações | direções | linhas | arquivo |
+| --- | --- | --- | --- | --- | --- |
+| coelho | 24×21 | 8 | N/S/L/O | 32 | `assets/Animals/rabbit.png` |
+| sapo | 24×19 | 8 | N/S/L/O | 32 | `assets/Animals/frog.png` |
+| cobra | 30×21 | 10 | N/S/L/O | 40 | `assets/Animals/snake.png` |
+| ave | 19×14 | 5 | única + flip | 5 | `assets/Animals/bird.png` |
+
+Animações por espécie: `idle · walk · run · jump · eat · sleep · hurt · death`
+(+ `strike · coil · hiss` na cobra). A **ave** não veio com prancha nova nesta
+etapa: continua na folha antiga, com espelho horizontal e `alias`
+(`death→sleep`, `hurt→fly`, `rest→sleep`), sem inventar quadro.
+
+**Como a direção é escolhida**
+
+1. `facingFromVector(dx, dy, anterior)` olha o **deslocamento real** do agente.
+   O eixo horizontal vence por 25% de margem; na diagonal o eixo anterior é
+   mantido. Empate/parado nunca troca a direção — o sprite não pisca.
+2. `Animal.facingDir` guarda `n|s|e|w`; `facing` (1/−1) continua existindo para
+   compatibilidade (efeitos antigos).
+3. O render usa `faunaRow(sheet, anim, dir)` → linha `anim:dir`. Só espelha
+   (`faunaFlip`) quando a folha **não tem** aquela direção desenhada (ave).
+
+**Correção da direção OESTE (o pedido principal)**
+
+Nas pranchas do **coelho** e da **cobra**, a coluna Oeste foi desenhada com a
+mesma arte da Leste (o bicho "andava para a direita" indo para a esquerda). O
+extrator mede isso por animação, compara com o espelho da Leste e decide
+**pela espécie inteira** (não por animação isolada, senão sono/morte — poses
+quase simétricas — faziam a folha misturar as duas convenções):
+
+| espécie | votos "igual a L" | votos "já espelhada" | ação |
+| --- | --- | --- | --- |
+| coelho | 5 | 0 | **coluna Oeste espelhada** (8 animações) |
+| cobra | 8 | 0 | **coluna Oeste espelhada** (10 animações) |
+| sapo | 0 | 6 | mantida (a prancha já trouxe Oeste voltada para a esquerda) |
+
+O `rabbit.json`/`snake.json` registram `mirroredDirs.w` para rastreabilidade, e
+`docs/imagens/fauna_direcoes.png` (`npm run visual:dirs`) mostra lado a lado
+**L | O | O=espelho de L | N | S** — a coluna 2 (Oeste desenhada) deve ser
+igual à coluna 3. Testes cobrem a inclinação da cabeça (L positiva, O negativa)
+e a diferença de silhueta (O ≈ espelho de L, ≠ L).
+
+**Extração (por que não é recorte fixo)**
+
+A grade das pranchas não está em passo uniforme e as células têm divisórias
+finas. O extrator, em vez de presumir coordenadas: mede as **faixas** de
+animação pela projeção da máscara, acha os **runs** de coluna dentro de cada
+faixa, detecta os 3 **vãos maiores** (quebra entre blocos de direção) e encaixa
+as 16 posições; depois auto-recorta o bicho, reduz por média de área, quantiza
+e aplica alpha binário. Célula ausente repete o último quadro válido (nunca
+inventa arte) e o JSON reporta as lacunas — a única hoje é `rabbit:w` quadro 3,
+repetido.
+
 ### Desempenho medido (mesmo harness nas duas versões)
 
 40 animais + 114 insetos, câmera 480×320, 240 quadros, seed 1337:
 
-| alvo | antes (2a046ce) | depois | ops/frame |
+| alvo | antes (2a046ce) | depois (direções) | ops/frame |
 | --- | --- | --- | --- |
-| mobile (25 chunks) | 2,30 ms | **2,27 ms** | 1.373 → **1.414** (+3%) |
-| desktop (49 chunks) | 2,11 ms | **1,91 ms** | 1.373 → **1.414** (+3%) |
+| mobile (25 chunks) | 2,30 ms | **2,38 ms** | 1.373 → **1.409** (+2,6%) |
+| desktop (49 chunks) | 2,11 ms | **2,65 ms** | 1.373 → **1.409** (+2,6%) |
 
 Os efeitos só existem para animais a menos de 420 px do centro da câmera e para
 estados específicos; o custo medido está dentro do ruído do harness.
@@ -323,15 +387,13 @@ navegador no projeto).
 6. Coelho e ave não atravessam chunk: ficam contidos na área do chunk dono
    (a travessia com transferência de dono existe para insetos; para a fauna
    ficou como evolução futura para não duplicar donos).
-7. **Sprites de morte/dor**: só a cobra tem linhas `hurt`/`death`. Coelho, sapo
-   e ave não têm esses quadros na prancha processada; a morte usa a pose de
-   repouso congelada + decomposição (e a dor usa `jump`/`fly`). A prancha nova
-   desta etapa (`tools/data/fauna-vida-reference.png`) tem poses de `hurt`/
-   `death` para as três espécies, mas o recorte é suave e irregular — foi
-   mantido **fora** do pipeline para não substituir sprites bons por um
-   recorte pior. Extrair essas poses exige uma passada dedicada de re-extração.
-8. Sem sprites de 4 direções: o jogo usa `flip` horizontal (a prancha só tem
-   perfil). Subir/descer mantém a direção anterior; não há sprite "de costas".
+7. **Morte/dor**: coelho, sapo e cobra agora têm linhas próprias (`hurt`,
+   `death`) nas pranchas direcionais. A **ave** ainda não: usa `fly` para dor e
+   `sleep` congelado para a carcaça (registrado no `alias` do manifesto).
+8. **Direções**: coelho, sapo e cobra têm N/S/L/O desenhados. A **ave** continua
+   de perfil, com espelho horizontal — é a única espécie sem arte de 4 direções.
+9. Sem diagonais: o eixo dominante do movimento decide a direção (com
+   histerese); não existe sprite diagonal.
 
 ## 8. Como reproduzir
 

@@ -101,6 +101,13 @@ export class NullFauna implements FaunaSystem {
 
 export type FaunaKind = 'rabbit' | 'frog' | 'bird' | 'snake';
 
+/**
+ * Direção no plano (top-down). As folhas direcionais têm arte para as quatro:
+ * n = costas, s = frente, e = direita, w = esquerda. O render nunca inventa
+ * direção: usa a linha desenhada ou espelha (ver `faunaRow` no manifesto).
+ */
+export type Facing4 = 'n' | 's' | 'e' | 'w';
+
 export type FaunaAnim =
   | 'idle'
   | 'walk'
@@ -146,6 +153,8 @@ export interface FaunaAgentView {
   state: FaunaState;
   anim: FaunaAnim;
   frame: number;
+  /** direção desenhada escolhida para este quadro */
+  dir: Facing4;
   facing: 1 | -1;
   /** espaço acima do chão (voo da ave) em px */
   hover: number;
@@ -167,7 +176,14 @@ export interface Animal {
   state: FaunaState;
   /** tempo no estado atual (h de jogo) */
   timer: number;
+  /** espelho horizontal (compatibilidade): -1 quando olha para O */
   facing: 1 | -1;
+  /**
+   * direção real do movimento no plano. Define a linha do spritesheet
+   * (n/s/e/w) e a orientação da sombra/efeitos. Só muda quando o eixo
+   * dominante do deslocamento muda — não fica piscando em diagonais.
+   */
+  facingDir?: Facing4;
   /** fase da animação (segundos de jogo acumulados andando) */
   animPhase: number;
   /** 0..1 — fome acumulada (1 = faminto) */
@@ -239,6 +255,7 @@ export function makeAnimal(partial: Pick<Animal, 'id' | 'kind' | 'chunk' | 'x' |
     state: 'idle',
     timer: 0,
     facing: 1,
+    facingDir: 's',
     animPhase: quirk * 4,
     hunger: 0.3 + quirk * 0.3,
     thirst: 0.2 + quirk * 0.25,
@@ -554,14 +571,11 @@ export interface FaunaStepOptions {
 }
 
 /**
- * Mapeia estado → animação disponível no spritesheet da espécie.
+ * Mapeia estado da IA → animação LÓGICA da espécie.
  *
- * Regra: NUNCA inventar quadro. Se a folha não tem uma animação específica
- * (peek/approach/retreat da cobra, morte do coelho/sapo/ave), o comportamento
- * usa a linha existente mais próxima — a IA continua a mesma.
- *
- * `hurt` é um sinal curto (`hurtTimer`), não um estado: a dor não interrompe a
- * decisão, só troca a pose por alguns segundos.
+ * A IA não mudou: o que mudou é que cada espécie agora tem arte para as quatro
+ * direções e para dor/morte. Nomes fora da folha são traduzidos no manifesto
+ * (`alias`), nunca renderizados como quadro inventado.
  */
 export function animFor(
   kind: FaunaKind,
@@ -570,24 +584,22 @@ export function animFor(
   inWater: boolean,
   hurt = false,
 ): FaunaAnim {
-  // dor: sinal curto de reação (não é estado). A cobra tem linha própria;
-  // coelho/sapo dão um sobressalto e a ave bate asas — animações que existem.
-  if (hurt) return kind === 'snake' ? 'hurt' : kind === 'bird' ? 'fly' : 'jump';
+  // dor: sinal curto de reação (não é estado) — todas as espécies com linha
+  // própria agora; a ave (folha antiga) ainda usa o bater de asas
+  if (hurt) return kind === 'bird' ? 'fly' : 'hurt';
   if (kind === 'snake') {
-    // só as animações que existem na folha fornecida (idle/move/attack/hide/
-    // hurt/death/sleep) — nunca inventar frame
     switch (state) {
       case 'dead':
         return 'death';
       case 'attack':
-        return 'attack';
+        return 'attack'; // strike: bote
       case 'hide':
       case 'rest':
-        return 'hide';
+        return 'hide'; // coil (enrolada na toca)
       case 'sleep':
         return 'sleep';
       case 'hunt':
-        // emboscada: parada na toca = enrolada (hide); deslocando = move
+        // emboscada: parada na toca = enrolada; deslocando = move
         return moving ? 'move' : 'hide';
       case 'flee':
       case 'wander':
@@ -599,15 +611,14 @@ export function animFor(
         return 'idle';
     }
   }
-  // morto: as folhas de coelho/sapo/ave não têm linha de morte; a carcaça usa
-  // a pose de repouso CONGELADA (sem quadro de respiração) e o render aplica
-  // a marca de decomposição — ver `emitAnimal`.
-  if (state === 'dead') return 'sleep';
+  // morte: coelho e sapo têm linha `death` própria (carcaça imóvel no 1º quadro)
+  if (state === 'dead') return 'death';
   if (kind === 'frog') {
-    if (inWater) return 'swim';
+    if (inWater) return 'swim'; // linha walk + ondulação da água no render
     if (state === 'eat') return 'eat';
     if (state === 'sleep' || state === 'rest') return 'sleep';
-    if (state === 'flee' || state === 'wander') return moving ? 'jump' : 'idle';
+    if (state === 'flee') return moving ? 'run' : 'idle';
+    if (state === 'wander' || state === 'seek_food' || state === 'seek_water') return moving ? 'walk' : 'idle';
     return 'idle';
   }
   if (kind === 'bird') {
@@ -618,11 +629,29 @@ export function animFor(
     if (state === 'sleep' || state === 'rest') return 'sleep';
     return 'idle';
   }
+  // coelho
   if (state === 'eat') return 'eat';
   if (state === 'sleep' || state === 'rest') return 'sleep';
   if (state === 'flee') return 'run';
   if (state === 'wander' || state === 'seek_food' || state === 'seek_water') return moving ? 'walk' : 'idle';
   return 'idle';
+}
+
+/**
+ * Direção a partir do vetor de deslocamento, com HISterese de 25%: o eixo só
+ * troca quando domina o outro, então diagonais não ficam alternando L/S a cada
+ * quadro. Vetor parado mantém a direção anterior.
+ */
+export function facingFromVector(dx: number, dy: number, previous: Facing4 = 's'): Facing4 {
+  const ax = Math.abs(dx);
+  const ay = Math.abs(dy);
+  if (ax < 1 && ay < 1) return previous;
+  if (ax > ay * 1.25) return dx >= 0 ? 'e' : 'w';
+  if (ay > ax * 1.25) return dy >= 0 ? 's' : 'n';
+  // diagonal: mantém o EIXO anterior (o sinal continua vindo do movimento)
+  const horizontal = previous === 'e' || previous === 'w';
+  if (horizontal) return dx >= 0 ? 'e' : 'w';
+  return dy >= 0 ? 's' : 'n';
 }
 
 function chooseTarget(animal: Animal, cfg: WorldConfig, opts: FaunaStepOptions): void {
@@ -1291,9 +1320,14 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
         }
         animal.vx = vx;
         animal.vy = vy;
-        // top-down: só vira o sprite quando o deslocamento é sobretudo
-        // horizontal — subir/descer mantém a última direção (nada de piscar)
-        if (Math.abs(vx) > 8) animal.facing = vx >= 0 ? 1 : -1;
+        // direção desenhada: vem do DESLOCAMENTO real (o que o jogador vê),
+        // com histerese para não alternar entre duas direções na diagonal
+        if (!blocked) {
+          animal.facingDir = facingFromVector(dxs, dys, animal.facingDir ?? 's');
+          // compatibilidade: -1 = olhando para a esquerda
+          if (animal.facingDir === 'e') animal.facing = 1;
+          else if (animal.facingDir === 'w') animal.facing = -1;
+        }
         animal.animPhase += h * (animal.state === 'flee' ? 10 : 5);
       } else if (animal.state !== 'flee' && animal.state !== 'chase') {
         // chegou ao destino de exploração/comida; fuga e perseguição só
@@ -1321,9 +1355,12 @@ export function stepFauna(animals: Animal[], cfg: WorldConfig, hours: number, op
         const d = Math.hypot(dx, dy);
         const speed = traits.speed * 1.6;
         if (d > 4) {
-          animal.x += (dx / d) * speed * dtSec;
-          animal.y += (dy / d) * speed * dtSec;
-          animal.facing = dx >= 0 ? 1 : -1;
+          const stepX = (dx / d) * speed * dtSec;
+          const stepY = (dy / d) * speed * dtSec;
+          animal.x += stepX;
+          animal.y += stepY;
+          animal.facingDir = facingFromVector(stepX, stepY, animal.facingDir ?? 's');
+          animal.facing = animal.facingDir === 'w' ? -1 : 1;
           animal.animPhase += h * 14;
           animal.hover = 10 + Math.sin(animal.animPhase * 0.6) * 2;
         } else {
@@ -1499,12 +1536,12 @@ export function agentView(animal: Animal, timeMs: number, framesFor: (a: FaunaAn
   const hurt = (animal.hurtTimer ?? 0) > 0;
   const anim = animFor(animal.kind, animal.state, moving, spot.water > 0.25, hurt);
   const frames = framesFor(anim);
+  const dir: Facing4 = animal.facingDir ?? (animal.facing === -1 ? 'w' : 's');
   let frame = animFrame(animal, anim, frames, timeMs);
   if (animal.state === 'dead') {
-    // carcaça: a cobra tem linha de morte (colapsa e congela no último quadro);
-    // as outras folhas congelam na pose de repouso — nada de respirar/andar.
-    const secs = (animal.corpseHours ?? 0) * 60;
-    frame = animal.kind === 'snake' ? Math.min(Math.max(0, frames - 1), Math.floor(secs / 0.1)) : 0;
+    // carcaça: a linha de morte colapsa e CONGELA no último quadro (nada de
+    // respirar/andar); o corpo fica imóvel até virar solo
+    frame = Math.max(0, frames - 1);
   }
   return {
     id: animal.id,
@@ -1514,6 +1551,7 @@ export function agentView(animal: Animal, timeMs: number, framesFor: (a: FaunaAn
     state: animal.state,
     anim,
     frame,
+    dir,
     facing: animal.facing,
     hover: animal.state === 'dead' ? 0 : animal.hover,
     scale: 1,

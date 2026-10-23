@@ -13,7 +13,7 @@ import { SoftwareRenderer, type SpriteSource } from './software';
 import { allAssetFiles } from '../src/render/manifest';
 import { composeScene } from '../src/render/scene';
 import { World } from '../src/world/world';
-import { seedFauna, makeAnimal, type Animal } from '../src/world/fauna';
+import { seedFauna, makeAnimal, type Animal, type Facing4 } from '../src/world/fauna';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const arg = (n: string, d: string) => {
@@ -104,7 +104,24 @@ function main(): void {
   const faunaMap = (world as unknown as { faunaByChunk: Map<string, Animal[]> }).faunaByChunk;
   faunaMap.set('0,0', showcase);
 
-  const cam = { x: baseX - 40, y: baseY - 100, w: 760, h: 250 };
+  // --- terceira faixa: as quatro direções de cada espécie caminhando ---------
+  const row3 = 168;
+  const dirs: Facing4[] = ['n', 's', 'e', 'w'];
+  const kinds: Array<Animal['kind']> = ['rabbit', 'frog', 'snake'];
+  kinds.forEach((kind, ki) => {
+    dirs.forEach((d, di) => {
+      showcase.push(make(kind, 40 + di * 34 + ki * 190, 'wander', {
+        y: row3 + ki * 40,
+        facingDir: d,
+        facing: d === 'w' ? -1 : 1,
+        vx: d === 'e' ? 30 : d === 'w' ? -30 : 0,
+        vy: d === 's' ? 20 : d === 'n' ? -20 : 0,
+        animPhase: 1 + di * 0.5,
+      }));
+    });
+  });
+
+  const cam = { x: baseX - 40, y: baseY - 100, w: 760, h: 380 };
   const scene = composeScene(world, cam, {
     timeMs: 1200,
     player: { x: baseX - 20, y: baseY + 6, moving: false, frame: 0, female: false, facing: 1 },
