@@ -388,6 +388,7 @@ export function allAssetFiles(): string[] {
   set.add(PIXELLAB_GROUND_FILES.grass);
   set.add(PIXELLAB_GROUND_FILES.dirt);
   set.add(PIXELLAB_GROUND_FILES.sand);
+  set.add('Tilesets/pixellab/01_lago_margem.png');
   set.add('Tilesets/pixellab/05_grama_riacho.png');
   set.add(FRUIT_SHEET);
   set.add(SEED_SHEET);
