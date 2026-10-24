@@ -1,0 +1,104 @@
+{
+  "id": "05_grama_riacho",
+  "file": "Tilesets/pixellab/05_grama_riacho.png",
+  "lower": "the same lush deep green forest grass clearing with varied short grass, rich clover patches and scattered fern shoots, matching the connected grass reference tile",
+  "upper": "crystal clear forest stream with intricate gentle current streaks and smooth rounded river pebbles visible beneath the cool blue-green water, featuring layered deep tones and bright surface highlights",
+  "corners": {
+    "1000": [
+      32,
+      32,
+      32,
+      32
+    ],
+    "1001": [
+      64,
+      96,
+      32,
+      32
+    ],
+    "1010": [
+      32,
+      0,
+      32,
+      32
+    ],
+    "1011": [
+      0,
+      64,
+      32,
+      32
+    ],
+    "1100": [
+      96,
+      0,
+      32,
+      32
+    ],
+    "1101": [
+      0,
+      0,
+      32,
+      32
+    ],
+    "1110": [
+      32,
+      96,
+      32,
+      32
+    ],
+    "1111": [
+      0,
+      96,
+      32,
+      32
+    ],
+    "0100": [
+      64,
+      0,
+      32,
+      32
+    ],
+    "0110": [
+      0,
+      32,
+      32,
+      32
+    ],
+    "0000": [
+      64,
+      32,
+      32,
+      32
+    ],
+    "0001": [
+      96,
+      32,
+      32,
+      32
+    ],
+    "0011": [
+      32,
+      64,
+      32,
+      32
+    ],
+    "0010": [
+      64,
+      64,
+      32,
+      32
+    ],
+    "0101": [
+      96,
+      64,
+      32,
+      32
+    ],
+    "0111": [
+      96,
+      96,
+      32,
+      32
+    ]
+  }
+}

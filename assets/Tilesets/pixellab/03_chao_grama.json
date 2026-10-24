@@ -1,0 +1,104 @@
+{
+  "id": "03_chao_grama",
+  "file": "Tilesets/pixellab/03_chao_grama.png",
+  "lower": "the same rich temperate forest floor of layered brown leaf litter, fine pine needles, soft moss patches and tiny groundcover, matching the connected reference tile",
+  "upper": "dense temperate forest grass clearing with rich clover patches, scattered fern shoots and delicate tiny wildflowers, featuring layered shadows and bright sunlit tips across varied short blades",
+  "corners": {
+    "1000": [
+      32,
+      32,
+      32,
+      32
+    ],
+    "1001": [
+      64,
+      96,
+      32,
+      32
+    ],
+    "1010": [
+      32,
+      0,
+      32,
+      32
+    ],
+    "1011": [
+      0,
+      64,
+      32,
+      32
+    ],
+    "1100": [
+      96,
+      0,
+      32,
+      32
+    ],
+    "1101": [
+      0,
+      0,
+      32,
+      32
+    ],
+    "1110": [
+      32,
+      96,
+      32,
+      32
+    ],
+    "1111": [
+      0,
+      96,
+      32,
+      32
+    ],
+    "0100": [
+      64,
+      0,
+      32,
+      32
+    ],
+    "0110": [
+      0,
+      32,
+      32,
+      32
+    ],
+    "0000": [
+      64,
+      32,
+      32,
+      32
+    ],
+    "0001": [
+      96,
+      32,
+      32,
+      32
+    ],
+    "0011": [
+      32,
+      64,
+      32,
+      32
+    ],
+    "0010": [
+      64,
+      64,
+      32,
+      32
+    ],
+    "0101": [
+      96,
+      64,
+      32,
+      32
+    ],
+    "0111": [
+      96,
+      96,
+      32,
+      32
+    ]
+  }
+}

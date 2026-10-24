@@ -1,0 +1,104 @@
+{
+  "id": "01_lago_margem",
+  "file": "Tilesets/pixellab/01_lago_margem.png",
+  "lower": "calm still dark teal and blue-green forest pond water with intricate micro-ripples, subtle layered reflections, scattered floating lily pads, and deep shadowed depths, with rich tonal range and bright surface highlights",
+  "upper": "soft wet dark brown muddy pond bank featuring intricate soil texture, scattered fallen leaves, tiny embedded roots, and velvety moss patches, with layered earth tones, deep shadows, and bright sunlit highlights",
+  "corners": {
+    "1000": [
+      32,
+      32,
+      32,
+      32
+    ],
+    "1001": [
+      64,
+      96,
+      32,
+      32
+    ],
+    "1010": [
+      32,
+      0,
+      32,
+      32
+    ],
+    "1011": [
+      0,
+      64,
+      32,
+      32
+    ],
+    "1100": [
+      96,
+      0,
+      32,
+      32
+    ],
+    "1101": [
+      0,
+      0,
+      32,
+      32
+    ],
+    "1110": [
+      32,
+      96,
+      32,
+      32
+    ],
+    "1111": [
+      0,
+      96,
+      32,
+      32
+    ],
+    "0100": [
+      64,
+      0,
+      32,
+      32
+    ],
+    "0110": [
+      0,
+      32,
+      32,
+      32
+    ],
+    "0000": [
+      64,
+      32,
+      32,
+      32
+    ],
+    "0001": [
+      96,
+      32,
+      32,
+      32
+    ],
+    "0011": [
+      32,
+      64,
+      32,
+      32
+    ],
+    "0010": [
+      64,
+      64,
+      32,
+      32
+    ],
+    "0101": [
+      96,
+      64,
+      32,
+      32
+    ],
+    "0111": [
+      96,
+      96,
+      32,
+      32
+    ]
+  }
+}

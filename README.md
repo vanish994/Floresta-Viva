@@ -23,6 +23,7 @@ npm run visual:eco       # cena headless do ecossistema (frutos/insetos)
 npm run visual:fauna     # cena headless da fauna (coelho/sapo/ave)
 npm run visual:tileset   # comparação A/B do chão/água (Harmonious × pack)
 npm run sprites:pack     # regenera os tiles de chão/água a partir do pack gratuito
+npm run sprites:pixellab # importa os tilesets Wang 32px do pack PixelLab (autotile)
 npm run sprites:fauna    # regenera os sprites da fauna a partir da prancha
 npm run build        # typecheck + bundle
 ```
@@ -152,6 +153,7 @@ O jogo é jogável no celular (toque), não só no desktop:
 - `docs/ECOSSISTEMA.md` — floração, frutos, queda, sementes, insetos e pragas.
 - `docs/FAUNA.md` — fauna visual (coelho, sapo, ave): sprites, estados, chunks.
 - `docs/TILESET.md` — tileset de chão/água do pack: pipeline, recolorização, integração, limitações.
+- `docs/PIXELLAB.md` — tilesets Wang 4×4 (32 px, autotile) do pack PixelLab.
 - `docs/EVOLUCAO_CAUSAL.md` — ciclos água/solo/atmosfera/vegetação/fauna.
 - `docs/RELATORIO_FINAL.md` — relatório final pedido pelo prompt (testes, limitações, pendências).
 - `docs/PROMPT_MUNDO_PROCEDURAL_FLORESTA_VIVA.md` — o prompt original do projeto.
