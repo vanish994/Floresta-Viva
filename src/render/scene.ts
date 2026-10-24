@@ -275,26 +275,26 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
       const frameMs = 420 / (0.6 + Math.min(2.5, speed * 12));
       const frameIdx = Math.floor(opts.timeMs / frameMs) % 4;
       // superfície e fundo: o tileset do pack usa os quadros extraídos do pack
-      const usePack = false;
-      const mid = usePack
-        ? ([(frameIdx % PACK_WATER_FRAMES) * T, 0, T, T] as Rect)
+      const usePixelLab = activeTilesetId() === 'pixellab';
+      const mid = usePixelLab
+        ? ([64, 32, 32, 32] as Rect) // água parada (cantos 0000) do tileset de lago
         : SPRITES.water_mid.frames[frameIdx];
       ops.push({
         k: 'blit',
-        img: usePack ? PACK_WATER_FILE : SPRITES.water_mid.file,
+        img: usePixelLab ? 'Tilesets/pixellab/01_lago_margem.png' : SPRITES.water_mid.file,
         sx: mid[0], sy: mid[1], sw: mid[2], sh: mid[3], dx: sx, dy: sy, dw: T, dh: T,
-        alpha: alpha * (usePack ? 0.82 : 0.92) * (snowy ? 0.85 : 1),
+        alpha: alpha * (usePixelLab ? 0.88 : 0.92) * (snowy ? 0.85 : 1),
       });
       const deepA = smoothstepLocal(0.35, 1.1, d);
       if (deepA > 0.02) {
-        const deep = usePack
-          ? ([(frameIdx % PACK_WATER_FRAMES) * T, 0, T, T] as Rect)
+        const deep = usePixelLab
+          ? ([64, 32, 32, 32] as Rect)
           : SPRITES.water_deep.frames[frameIdx];
         ops.push({
           k: 'blit',
-          img: usePack ? PACK_WATER_DEEP_FILE : SPRITES.water_deep.file,
+          img: usePixelLab ? 'Tilesets/pixellab/01_lago_margem.png' : SPRITES.water_deep.file,
           sx: deep[0], sy: deep[1], sw: deep[2], sh: deep[3], dx: sx, dy: sy, dw: T, dh: T,
-          alpha: deepA * (usePack ? 0.9 : 1),
+          alpha: deepA * (usePixelLab ? 0.95 : 1),
         });
       }
       // Profundidade legível: água rasa mantém o brilho; água funda ganha
