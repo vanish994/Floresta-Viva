@@ -212,14 +212,27 @@ function loop(now: number) {
   requestAnimationFrame(loop);
 }
 
-function toggleTileset() {
-  setActiveTileset(activeTilesetId() === 'pack' ? 'harmonious' : 'pack');
+function updateTilesetButton() {
   const button = document.getElementById('btn-tileset');
-  if (button) {
-    button.textContent = activeTilesetId() === 'pack' ? '🗺 tileset: Pack' : '🗺 tileset: Harmonious';
-    button.setAttribute('aria-pressed', String(activeTilesetId() === 'harmonious'));
-  }
+  if (!button) return;
+  const active = activeTilesetId();
+  // Mostra sempre as DUAS opções e deixa claro qual será ativada no próximo toque.
+  button.textContent = active === 'pack'
+    ? '🗺 Pack → Harmonioso'
+    : '🗺 Harmonioso → Pack';
+  button.setAttribute('aria-pressed', String(active === 'harmonious'));
+  button.setAttribute('aria-label', active === 'pack'
+    ? 'Tileset atual: Pack. Toque para usar Harmonioso.'
+    : 'Tileset atual: Harmonioso. Toque para usar Pack.');
 }
+
+function toggleTileset() {
+  const next = activeTilesetId() === 'pack' ? 'harmonious' : 'pack';
+  setActiveTileset(next);
+  updateTilesetButton();
+}
+
+updateTilesetButton();
 
 document.getElementById('btn-tileset')?.addEventListener('click', () => {
   void rainAudio.unlock();
