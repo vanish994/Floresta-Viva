@@ -180,11 +180,8 @@ function loop(now: number) {
   if (input.consume('KeyP')) world.clock.paused = !world.clock.paused;
   if (input.consume('KeyF') || touch.consumeCut()) cutTree();
   if (input.consume('KeyG') || touch.consumePlant()) plantSeedling();
-  // T alterna o tileset (pack ⇄ Harmonious) para comparar ao vivo — não muda
-  // física, IA nem save: só qual folha de chão/água o render desenha.
-  if (input.consume('KeyT')) {
-    setActiveTileset(activeTilesetId() === 'pack' ? 'harmonious' : 'pack');
-  }
+  // T no teclado e botão de toque executam a mesma ação.
+  if (input.consume('KeyT')) toggleTileset();
 
   const kb = input.axis();
   const tAxis = touch.state.axis;
@@ -214,6 +211,20 @@ function loop(now: number) {
   updateHud(scene.ops.length);
   requestAnimationFrame(loop);
 }
+
+function toggleTileset() {
+  setActiveTileset(activeTilesetId() === 'pack' ? 'harmonious' : 'pack');
+  const button = document.getElementById('btn-tileset');
+  if (button) {
+    button.textContent = activeTilesetId() === 'pack' ? '🗺 tileset: Pack' : '🗺 tileset: Harmonious';
+    button.setAttribute('aria-pressed', String(activeTilesetId() === 'harmonious'));
+  }
+}
+
+document.getElementById('btn-tileset')?.addEventListener('click', () => {
+  void rainAudio.unlock();
+  toggleTileset();
+});
 
 function cutTree() {
   const cfg = world.cfg;
