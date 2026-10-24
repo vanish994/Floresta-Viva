@@ -9,7 +9,7 @@ import { Input } from './game/input';
 import { TouchControls } from './game/touch';
 import { CanvasRenderer } from './render/CanvasRenderer';
 import { composeScene, type DebugMode } from './render/scene';
-import { allAssetFiles, setActiveTileset, activeTilesetId } from './render/manifest';
+import { allAssetFiles } from './render/manifest';
 import { saveWorld, loadWorld, clearSave, applyChunkDiffs } from './world/persistence';
 import { seedFromString } from './core/rng';
 import { hash2 } from './core/rng';
@@ -180,11 +180,6 @@ function loop(now: number) {
   if (input.consume('KeyP')) world.clock.paused = !world.clock.paused;
   if (input.consume('KeyF') || touch.consumeCut()) cutTree();
   if (input.consume('KeyG') || touch.consumePlant()) plantSeedling();
-  // T alterna o tileset (pack ⇄ Harmonious) para comparar ao vivo — não muda
-  // física, IA nem save: só qual folha de chão/água o render desenha.
-  if (input.consume('KeyT')) {
-    setActiveTileset(activeTilesetId() === 'pack' ? 'harmonious' : 'pack');
-  }
 
   const kb = input.axis();
   const tAxis = touch.state.axis;
@@ -292,8 +287,7 @@ function updateHud(ops: number) {
   const water = world.stats.waterVolume >= 1000 ? `${(world.stats.waterVolume / 1000).toFixed(1)}k m³` : `${world.stats.waterVolume.toFixed(0)} m³`;
   const sediment = world.stats.sandCells;
   el('hud-perf').textContent = `${fps.toFixed(0)} fps · ${world.chunks.size} chunks · ${world.stats.plants} plantas · água ${water} · areia ${sediment} cél. · ${ops} ops · gen ${world.stats.genMs.toFixed(1)} ms · sim ${world.stats.simMs.toFixed(1)} ms${spr}`;
-  const tilesetLabel = activeTilesetId() === 'pack' ? 'pack' : 'harmonioso';
-  el('hud-debug').textContent = `${DEBUG_MODES[debugIdx] ? `debug: ${DEBUG_MODES[debugIdx]}` : 'debug: off (Q alterna)'} · tileset: ${tilesetLabel} (T alterna)`;
+  el('hud-debug').textContent = DEBUG_MODES[debugIdx] ? `debug: ${DEBUG_MODES[debugIdx]}` : 'debug: off (Q alterna)';
 
   // estado aquático: profundidade/correnteza reais + fôlego
   const swim = el('hud-swim');

@@ -61,7 +61,7 @@ export const GROUND_TILES_FILE = 'Miscellaneous/tiles.png';
 // --- tileset alternativo: pack gratuito, recolorido para o idioma do jogo ----
 // Gerado por `tools/extract-pack-tiles.ts` (área 32px + harmonize). O jogo
 // escolhe entre os dois no manifesto; nada da física/IA muda.
-export type TilesetId = 'harmonious' | 'pack';
+export type TilesetId = 'harmonious' | 'pack' | 'pixellab';
 
 /** variantes por tipo: o `groundVariant` do tile (0..3) escolhe pelo hash */
 export const PACK_GROUND: Record<'grass' | 'dirt' | 'sand' | 'snow', Rect[]> = {
@@ -82,8 +82,8 @@ export const PACK_WATER_FRAMES = 4;
  * `setActiveTileset` existe para o comparador A/B (`tools/tileset-compare.ts`)
  * e para o teste de consistência; o jogo usa o padrão abaixo.
  */
-let activeTileset: TilesetId = 'pack';
-export const DEFAULT_TILESET: TilesetId = 'pack';
+let activeTileset: TilesetId = 'pixellab';
+export const DEFAULT_TILESET: TilesetId = 'pixellab';
 export function setActiveTileset(id: TilesetId): void {
   activeTileset = id;
 }
@@ -373,6 +373,13 @@ export function allAssetFiles(): string[] {
   set.add(PACK_GROUND_FILE);
   set.add(PACK_WATER_FILE);
   set.add(PACK_WATER_DEEP_FILE);
+  for (const name of [
+    '01_lago_margem',
+    '02_margem_chao_floresta',
+    '03_chao_grama',
+    '04_grama_relevo',
+    '05_grama_riacho',
+  ]) set.add(`Tilesets/pixellab/${name}.png`);
   set.add(FRUIT_SHEET);
   set.add(SEED_SHEET);
   set.add(INSECT_SHEET);

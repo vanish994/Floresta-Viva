@@ -185,13 +185,12 @@ Equilíbrio da umidade = `0,34 + 0,26·sazonal + 0,10·floresta + 0,08·água �
 
 | item | valor | efeito |
 | --- | --- | --- |
-| `DEFAULT_TILESET` | `'pack'` | folha de chão/água usada por padrão |
-| `setActiveTileset(id)` / `activeTilesetId()` | `harmonious` \| `pack` | alternância em tempo real (tecla **T** no jogo) |
-| `groundRect(kind, variant)` | recorte + arquivo | escolhe a variante pelo `chunk.groundVariant` |
-| variantes | grama 4 · terra 2 · areia 2 · neve 1 | mais leitura sem trocar a física |
-| espelho determinístico | `(tx + ty + variante) & 1` | 8 leituras por textura (quebra a grade) |
-| água | 4 quadros, superfície + fundo | alpha 0,82 (pack) contra 0,92 (antigo) |
-| `matchTone` | ganho limitado 0,72–1,35 | casa a paleta do pack com a do jogo |
+| `setActiveTileset(id)` / `activeTilesetId()` | `pixellab` / `pack` / `harmonious` | seletor interno do render e comparador A/B; o jogo inicia em PixelLab |
+| `DEFAULT_TILESET` | `'pixellab'` | autotile Wang usado no jogo |
+| biomas derivados | água/margem/folhiço/grama/rocha | inferidos de `waterDepth`, `soilType`, `sandLayer`, `forage`, `light`, `slope` |
+| `wangTransition(levels)` | 4 cantos NW/NE/SW/SE | escolhe a folha Wang 01–04 sem estado novo |
+| riacho | `waterKind & 2` + profundidade | usa folha 05 (`grama_riacho`) |
+| custo | cache local por tile durante `composeScene` | sem dados persistidos ou geração nova |
 
 ## Personagem / natação (`src/game/player.ts`)
 

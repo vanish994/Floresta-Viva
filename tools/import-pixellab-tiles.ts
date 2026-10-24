@@ -9,13 +9,13 @@
  *  1. lê o zip direto do repositório (nada é copiado para `assets/` além do
  *     que o jogo realmente usa);
  *  2. monta, por folha, o mapa `cantos (NW+NE+SW+SE) → recorte`;
- *  3. descarta o que não encaixa no mundo (blocos em 2,5D, bordas com "penhasco"
- *     e tiles com moldura) usando só os metadados + uma checagem de desenho;
+ *  3. mede a diferença de luminância topo/base para diagnóstico de peças 2,5D;
+ *     NÃO remove tiles: a lombada escura é uma emenda válida entre terrenos;
  *  4. valida que os 16 cantos existem (Wang completo) — sem isso o autotiling
  *     deixaria buracos;
- *  5. grava um JSON por folha com o mapa de cantos, e uma folha única
- *     consolidada (`assets/Ground/pixellab_wang.png`) com os 16 recortes na
- *     ordem canônica de bits, para o render só indexar.
+ *  5. grava a folha original (128×128) e seu JSON de cantos em
+ *     `assets/Tilesets/pixellab/`; o render lê as tabelas de cantos desses
+ *     metadados (sem criar spritesheets duplicadas).
  *
  * Uso: npx tsx tools/import-pixellab-tiles.ts [--verbose]
  * Saída:
@@ -200,7 +200,7 @@ function main(): void {
       console.log(
         `  ${id}: ${Object.keys(corners).length}/16 cantos` +
         `${duplicated ? ` | ${duplicated} duplicado(s)` : ''}` +
-        `${rocky ? ` | ${rocky} descartado(s) por barranco` : ''}` +
+        `${rocky ? ` | ${rocky} com base escura (medidos e mantidos)` : ''}` +
         `${missing ? ` | ${missing} completado(s) pelo vizinho` : ''}`,
       );
     }

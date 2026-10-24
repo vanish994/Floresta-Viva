@@ -12,21 +12,22 @@ import { join } from 'node:path';
 import {
   PACK_GROUND,
   PACK_GROUND_FILE,
+  DEFAULT_TILESET,
+  activeTilesetId,
+  setActiveTileset,
   PACK_WATER_FILE,
   PACK_WATER_DEEP_FILE,
   PACK_WATER_FRAMES,
   GROUND_TILES,
   GROUND_TILES_FILE,
-  DEFAULT_TILESET,
-  activeTilesetId,
   allAssetFiles,
   groundRect,
-  setActiveTileset,
   type Rect,
 } from '../src/render/manifest';
 import { World } from '../src/world/world';
 import { composeScene } from '../src/render/scene';
 import { decodePNG, type RGBAImage } from '../tools/png';
+import { PIXELLAB_WANG, wangTransition, streamCornerKey } from '../src/render/pixellab';
 import { readZip, harmonize, matchTone, stats } from '../tools/extract-pack-tiles';
 
 const ROOT = join(__dirname, '..');
@@ -81,8 +82,9 @@ describe('tileset do pack: folhas e manifesto', () => {
       // no mínimo 2 leituras para grama/terra/areia (variação visível)
       if (kind !== 'snow') expect(PACK_GROUND[kind].length).toBeGreaterThanOrEqual(2);
     }
-    expect(DEFAULT_TILESET).toBe('pack');
-    expect(activeTilesetId()).toBe('pack');
+    expect(DEFAULT_TILESET).toBe('pixellab');
+    setActiveTileset('pixellab');
+    expect(activeTilesetId()).toBe('pixellab');
   });
 
   it('3. groundRect() alterna entre os dois tilesets sem inventar recorte', () => {
@@ -99,6 +101,82 @@ describe('tileset do pack: folhas e manifesto', () => {
     expect(gh.file).toBe(GROUND_TILES_FILE);
     expect(gh.rect).toEqual(GROUND_TILES.grass);
     setActiveTileset('pack'); // restaura o padrão do jogo
+  });
+});
+
+describe('tileset PixelLab: Wang 32×32 ativo no mapa', () => {
+  const names = {
+    lake: '01_lago_margem',
+    forest: '02_margem_chao_floresta',
+    grass: '03_chao_grama',
+    rock: '04_grama_relevo',
+    stream: '05_grama_riacho',
+  } as const;
+
+  it('4. cinco folhas Wang têm 16 cantos únicos e recortes 32×32 válidos', () => {
+    for (const [id, name] of Object.entries(names) as Array<[keyof typeof names, typeof names[keyof typeof names]]>) {
+      const sh = PIXELLAB_WANG[id];
+      const img = sheet(sh.file);
+      expect(img.width).toBe(128);
+      expect(img.height).toBe(128);
+      expect(Object.keys(sh.corners)).toHaveLength(16);
+      expect(new Set(Object.values(sh.corners).map((r) => r.join(','))).size).toBe(16);
+      for (const r of Object.values(sh.corners)) {
+        expect(r).toEqual([expect.any(Number), expect.any(Number), 32, 32]);
+        expect(r[0] + r[2]).toBeLessThanOrEqual(img.width);
+        expect(r[1] + r[3]).toBeLessThanOrEqual(img.height);
+      }
+      const json = JSON.parse(readFileSync(join(ROOT, 'assets/Tilesets/pixellab', `${name}.json`), 'utf8'));
+      expect(Object.keys(json.corners).sort()).toEqual(Object.keys(sh.corners).sort());
+    }
+  });
+
+  it('5. wangTransition escolhe as quatro fronteiras na cadeia de terreno', () => {
+    expect(wangTransition([0, 0, 0, 1])).toEqual({ sheet: 'lake', key: '0001' });
+    expect(wangTransition([1, 2, 1, 2])).toEqual({ sheet: 'forest', key: '0101' });
+    expect(wangTransition([2, 3, 2, 3])).toEqual({ sheet: 'grass', key: '0101' });
+    expect(wangTransition([3, 4, 3, 4])).toEqual({ sheet: 'rock', key: '0101' });
+    expect(wangTransition([0, 0, 0, 0])).toEqual({ sheet: 'lake', key: '0000' });
+    expect(wangTransition([4, 4, 4, 4])).toEqual({ sheet: 'rock', key: '1111' });
+    expect(streamCornerKey([true, false, true, false])).toBe('1010');
+  });
+
+  it('6. o tileset PixelLab é o default e as cinco folhas entram no carregador', () => {
+    expect(DEFAULT_TILESET).toBe('pixellab');
+    setActiveTileset('pixellab');
+    expect(activeTilesetId()).toBe('pixellab');
+    for (const sh of Object.values(PIXELLAB_WANG)) expect(allAssetFiles()).toContain(sh.file);
+  });
+
+  it('7. a cena usa os Wang PixelLab; não desenha o chão/água do pack antigo', () => {
+    setActiveTileset('pixellab');
+    const allPixelBlits: string[] = [];
+    const pixelFiles = new Set(Object.values(PIXELLAB_WANG).map((sh) => sh.file));
+    for (const seed of [1337, 4242]) {
+      const w = new World({ seed });
+      w.requestChunks(0, 0, 0, 0);
+      w.pumpGeneration(400);
+      for (let i = 0; i < 4; i++) w.update(0);
+      const cam = { x: w.playerX - 180, y: w.playerY - 120, w: 360, h: 240 };
+      const ops = composeScene(w, cam, { timeMs: 0 }).ops;
+      const pixelBlits = ops.filter((op) => op.k === 'blit' && pixelFiles.has(op.img));
+      expect(pixelBlits.length).toBeGreaterThan(0);
+      allPixelBlits.push(...pixelBlits.map((op) => op.k === 'blit' ? op.img : ''));
+      expect(ops.some((op) => op.k === 'blit' && op.img === PACK_GROUND_FILE)).toBe(false);
+      expect(ops.some((op) => op.k === 'blit' && op.img === PACK_WATER_FILE)).toBe(false);
+      expect(ops.some((op) => op.k === 'blit' && op.img === PACK_WATER_DEEP_FILE)).toBe(false);
+      expect(ops.some((op) => op.k === 'blit' && op.img === GROUND_TILES_FILE)).toBe(false);
+      for (const op of pixelBlits) {
+        if (op.k !== 'blit') continue;
+        expect([op.sw, op.sh, op.dw, op.dh]).toEqual([32, 32, 32, 32]);
+      }
+    }
+    // Os seeds gerados cobrem lago, lama, folhiço, grama e riacho. A transição
+    // de rocha é garantida pelo mapeador Wang (pode não cair nesta câmera).
+    for (const id of ['lake', 'forest', 'grass', 'stream'] as const) {
+      expect(allPixelBlits).toContain(PIXELLAB_WANG[id].file);
+    }
+    expect(wangTransition([3, 4, 3, 4]).sheet).toBe('rock');
   });
 });
 

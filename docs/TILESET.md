@@ -1,16 +1,17 @@
-# Tileset de chão e água (pack gratuito, recolorido)
+# Tileset de chão e água (PixelLab Wang; alternativa antiga pack recolorido)
 
-O chão (grama, terra, areia, neve) e a água podem vir de **dois tilesets**. A
-escolha é um único ponto no manifesto e não toca em física, IA, save ou testes
-de comportamento.
+O jogo agora usa **somente o tileset Wang PixelLab** para o chão e a água
+(`docs/PIXELLAB.md`): água, margem, folhiço, grama, rocha e riacho. A física,
+IA e save não mudam.
 
-| tileset | arquivo | origem |
+| tileset | papel atual | arquivos |
 | --- | --- | --- |
-| `harmonious` (antigo) | `assets/Miscellaneous/tiles.png` + `assets/Water/WaterTilesAnimated/*` | pacote Harmonious (original do projeto) |
-| `pack` (novo, padrão) | `assets/Ground/pack_tiles.png` + `assets/Water/pack_water*.png` | "Free asset pack", recolorido |
+| `pixellab` | **ativo no jogo** | `assets/Tilesets/pixellab/*.png` (Wang nativo 32×32) |
+| `pack` | folhas geradas, mantidas para comparação/ferramentas | `assets/Ground/pack_tiles.png`, `assets/Water/pack_water*.png` |
+| `harmonious` | fallback/testes; não desenhado no mapa normal | `assets/Miscellaneous/tiles.png`, `assets/Water/WaterTilesAnimated/*` |
 
-No jogo, **`T` alterna** entre os dois ao vivo (o HUD mostra qual está ativo).
-Nada é salvo: ao recarregar, volta o padrão do manifesto.
+Não há alternância de tileset na interface do jogo. Ferramentas de comparação
+podem mudar o seletor em memória; o default de runtime é `pixellab`.
 
 ---
 
@@ -68,44 +69,31 @@ A prancha de praia tem **só 1 tile realmente plano** (o resto é transição ar
 mar, ilha em 2,5D, borda com rocha); o extrator escolhe por pontuação, não por
 índice — foi assim que o tile "meio areia, meio mar" deixou de entrar.
 
-## 4. Integração no render
+## 4. Tileset PixelLab (padrão atual)
 
-- `manifest.ts`: `PACK_GROUND` (recortes por tipo), `PACK_GROUND_FILE`,
-  `PACK_WATER_FILE`, `PACK_WATER_DEEP_FILE`, `DEFAULT_TILESET = 'pack'`,
-  `setActiveTileset()` / `activeTilesetId()` e `groundRect(kind, variant)`.
-- Variante: o `chunk.groundVariant` (0–3), que já existia gerado em `gen.ts`,
-  escolhe entre as 2–4 texturas do tipo.
-- **Espelho determinístico**: em `(tx + ty + variante) & 1` o tile é desenhado
-  espelhado — 2 variantes × 2 orientações = 8 leituras por textura, o que quebra
-  a "grade" sem custo de asset.
-- Água: o overlay translúcido por profundidade **continua igual**; muda só a
-  folha (superfície e fundo) e o alpha base (0,82 no pack contra 0,92).
-- Areia: no tileset antigo a areia era o próprio tile de terra clareado por um
-  `fill`; no pack já existe areia de verdade, então o véu é desligado.
+O mapa usa agora as folhas Wang PixelLab para **água, margem, folhiço, grama,
+rocha e riacho**, com `DEFAULT_TILESET = 'pixellab'`. O renderer deriva o bioma
+visual dos dados físicos já existentes (`waterDepth`, `soilType`, `sandLayer`,
+`forage`, `light`, `slope`) e faz autotile por quatro cantos. Não há estado novo
+nem mudança em física, IA ou save. Detalhes e preview em [`PIXELLAB.md`](PIXELLAB.md).
+
+A geração anterior de tiles recoloridos do pack gratuito continua em
+`assets/Ground/pack_tiles.png` e `assets/Water/pack_water*.png` para testes/A-B;
+não é desenhada no jogo. Não há tecla nem botão de alternância.
 
 ## 5. Testes e validação
 
-`tests/tileset.test.ts` (7 casos):
-
-1. folhas existem, cada célula é 32×32 e cabe na folha (e nenhuma repete recorte);
-2. todo tipo tem variante; `DEFAULT_TILESET === 'pack'`;
-3. `groundRect` alterna tilesets e não estoura com variante negativa/grande;
-4. a paleta do pack fica na mesma faixa do jogo **e ainda tem textura**;
-5. `matchTone`/`harmonize` são determinísticos, casam a média e não estouram;
-6. a cena usa a folha do tileset ativo (e o antigo continua funcionando);
-7. o zip está no repositório e só tem PNG (as pranchas usadas continuam lá).
-
-Imagem de validação: `docs/imagens/tileset_antes_depois.png`
-(`npm run visual:tileset`) — mesma cena, **mesmas ops**, esquerda Harmonious,
-direita pack.
+`tests/tileset.test.ts` valida as folhas pack+PixelLab, recortes, default PixelLab
+e que a cena não desenha os tiles antigos. A cadeia Wang testada por metadados
+cobre 16 cantos por folha. Suíte completa: **207 testes**.
 
 ## 6. Como reproduzir
 
 ```bash
 npm run sprites:pack      # regenera assets/Ground/pack_tiles.png e assets/Water/pack_water*.png
-npm run visual:tileset    # comparação A/B (docs/imagens/tileset_antes_depois.png)
-npm run preview:world     # cena headless do mundo (usa o tileset ativo)
-npm test                  # 203 testes
+npm run visual:tileset    # comparação headless dos tilesets antigos (ferramenta)
+npm run preview:world     # cena headless do mundo (PixelLab por padrão)
+npm test                  # 207 testes
 npm run build
 ```
 

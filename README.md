@@ -14,7 +14,7 @@ decomposição, erosão, clima, estações) evoluem em frequências separadas do
 ```bash
 npm install
 npm run dev          # abre o jogo (Vite em 0.0.0.0:5173)
-npm test             # 203 testes (determinismo, continuidade, hidrologia, água, erosão, natação, ecossistema, tempo, chunks, persistência)
+npm test             # 207 testes (determinismo, continuidade, hidrologia, água, erosão, natação, ecossistema, tempo, chunks, persistência)
 npm run preview:world  # validação visual headless: renderiza PNGs reais + mapas de campos
 npm run scenario:water # cenário reproduzível da física da água (volumes + orçamento)
 npm run scenario:erosion # cenário reproduzível de erosão/sedimentação/margens
@@ -137,10 +137,11 @@ O jogo é jogável no celular (toque), não só no desktop:
   [`docs/FAUNA.md`](docs/FAUNA.md).
 - **Fauna abstrata**: modelo de atividade (alimento/água/abrigo/hora/estação) que já alimenta a
   dispersão de sementes; interfaces `FaunaAgent`/`FaunaSystem` para agentes visuais futuros.
-- **Tileset**: chão (grama/terra/areia/neve) e água vêm do pack gratuito,
-  recolorido para o idioma do Harmonious (32 px, casamento de tom, variantes +
-  espelho determinístico para quebrar a repetição). `T` alterna com o tileset
-  antigo ao vivo. Ver [`docs/TILESET.md`](docs/TILESET.md).
+- **Mapa de chão/água PixelLab**: os 5 tilesets Wang **32×32** são agora usados
+  no jogo (água, margem, folhiço, grama, rocha e riacho); o bioma visual deriva
+  de água/solo/forragem/declive existentes, sem segundo sistema ou save novo.
+  Neve recebe véu sazonal; árvores/props continuam Harmonious. Ver
+  [`docs/PIXELLAB.md`](docs/PIXELLAB.md).
 - **Persistência** versionada em `localStorage` com diffs (plantas removidas/recrutadas,
   solo quantizado, deltas de terreno, lâmina e velocidade da água, relógio, posição).
 
