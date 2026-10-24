@@ -138,7 +138,7 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
       const groundPick = groundRect(kind, vGround);
       // espelho determinístico: 2 variantes × 2 orientações = 8 leituras por
       // textura, o que quebra a "grade" de tiles sem custo extra de asset
-      const groundFlip = activeTilesetId() === 'pack' && ((tx + ty + vGround) & 1) === 1;
+      const groundFlip = activeTilesetId() === 'pixellab' && ((tx + ty + vGround) & 1) === 1;
       ops.push({
         k: 'blit', img: groundPick.file,
         sx: groundPick.rect[0], sy: groundPick.rect[1], sw: 32, sh: 32,
@@ -152,7 +152,7 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
         ops.push({ k: 'blit', img: sandPick.file, sx: sandPick.rect[0], sy: sandPick.rect[1], sw: 32, sh: 32, dx: sx, dy: sy, dw: T, dh: T, alpha: sandA });
         // no tileset antigo a areia é o próprio tile de terra, então clareamos;
         // no pack a areia já é clara e esse véu só lavava a textura
-        if (activeTilesetId() !== 'pack') {
+        if (activeTilesetId() === 'harmonious') {
           ops.push({ k: 'fill', x: sx, y: sy, w: T, h: T, r: 226, g: 199, b: 138, a: sandA * 0.42 });
         }
         if (sandP > 0.45 && hash2(cfg.seed, Math.floor(tx / 3), Math.floor(ty / 3), 138) > 0.55) {
@@ -275,7 +275,7 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
       const frameMs = 420 / (0.6 + Math.min(2.5, speed * 12));
       const frameIdx = Math.floor(opts.timeMs / frameMs) % 4;
       // superfície e fundo: o tileset do pack usa os quadros extraídos do pack
-      const usePack = activeTilesetId() === 'pack';
+      const usePack = false;
       const mid = usePack
         ? ([(frameIdx % PACK_WATER_FRAMES) * T, 0, T, T] as Rect)
         : SPRITES.water_mid.frames[frameIdx];
