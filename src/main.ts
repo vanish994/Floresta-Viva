@@ -217,17 +217,17 @@ function updateTilesetButton() {
   if (!button) return;
   const active = activeTilesetId();
   // Mostra sempre as DUAS opções e deixa claro qual será ativada no próximo toque.
-  button.textContent = active === 'pack'
-    ? '🗺 Pack → Harmonioso'
-    : '🗺 Harmonioso → Pack';
-  button.setAttribute('aria-pressed', String(active === 'harmonious'));
-  button.setAttribute('aria-label', active === 'pack'
-    ? 'Tileset atual: Pack. Toque para usar Harmonioso.'
-    : 'Tileset atual: Harmonioso. Toque para usar Pack.');
+  button.textContent = active === 'harmonious'
+    ? '🗺 Harmonioso → PixelLab'
+    : '🗺 PixelLab → Harmonioso';
+  button.setAttribute('aria-pressed', String(active === 'pixellab'));
+  button.setAttribute('aria-label', active === 'harmonious'
+    ? 'Tileset atual: Harmonioso. Toque para usar PixelLab.'
+    : 'Tileset atual: PixelLab. Toque para usar Harmonioso.');
 }
 
 function toggleTileset() {
-  const next = activeTilesetId() === 'pack' ? 'harmonious' : 'pack';
+  const next = activeTilesetId() === 'harmonious' ? 'pixellab' : 'harmonious';
   setActiveTileset(next);
   updateTilesetButton();
 }
@@ -316,7 +316,7 @@ function updateHud(ops: number) {
   const water = world.stats.waterVolume >= 1000 ? `${(world.stats.waterVolume / 1000).toFixed(1)}k m³` : `${world.stats.waterVolume.toFixed(0)} m³`;
   const sediment = world.stats.sandCells;
   el('hud-perf').textContent = `${fps.toFixed(0)} fps · ${world.chunks.size} chunks · ${world.stats.plants} plantas · água ${water} · areia ${sediment} cél. · ${ops} ops · gen ${world.stats.genMs.toFixed(1)} ms · sim ${world.stats.simMs.toFixed(1)} ms${spr}`;
-  const tilesetLabel = activeTilesetId() === 'pack' ? 'pack' : 'harmonioso';
+  const tilesetLabel = activeTilesetId() === 'pixellab' ? 'PixelLab' : 'Harmonioso';
   el('hud-debug').textContent = `${DEBUG_MODES[debugIdx] ? `debug: ${DEBUG_MODES[debugIdx]}` : 'debug: off (Q alterna)'} · tileset: ${tilesetLabel} (T alterna)`;
 
   // estado aquático: profundidade/correnteza reais + fôlego
