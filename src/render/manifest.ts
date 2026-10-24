@@ -61,7 +61,7 @@ export const GROUND_TILES_FILE = 'Miscellaneous/tiles.png';
 // --- tileset alternativo: pack gratuito, recolorido para o idioma do jogo ----
 // Gerado por `tools/extract-pack-tiles.ts` (área 32px + harmonize). O jogo
 // escolhe entre os dois no manifesto; nada da física/IA muda.
-export type TilesetId = 'harmonious' | 'pack';
+export type TilesetId = 'harmonious' | 'pixellab';
 
 /** variantes por tipo: o `groundVariant` do tile (0..3) escolhe pelo hash */
 export const PACK_GROUND: Record<'grass' | 'dirt' | 'sand' | 'snow', Rect[]> = {
@@ -77,13 +77,26 @@ export const PACK_WATER_DEEP_FILE = 'Water/pack_water_deep.png';
 /** 4 quadros de superfície (o render usa a velocidade real para o ritmo) */
 export const PACK_WATER_FRAMES = 4;
 
+// Tilesets Wang importados do pack PixelLab. A seleção usa os tiles de preenchimento
+// (todos os cantos na mesma camada) até o render calcular as transições Wang.
+export const PIXELLAB_GROUND_FILES = {
+  grass: 'Tilesets/pixellab/03_chao_grama.png',
+  dirt: 'Tilesets/pixellab/02_margem_chao_floresta.png',
+  sand: 'Tilesets/pixellab/01_lago_margem.png',
+} as const;
+export const PIXELLAB_GROUND_RECTS: Record<'grass' | 'dirt' | 'sand', Rect> = {
+  grass: [0, 96, 32, 32],
+  dirt: [0, 96, 32, 32],
+  sand: [0, 96, 32, 32],
+};
+
 /**
  * Tileset ativo — UM ponto de decisão no render (nada de flag espalhada).
  * `setActiveTileset` existe para o comparador A/B (`tools/tileset-compare.ts`)
  * e para o teste de consistência; o jogo usa o padrão abaixo.
  */
-let activeTileset: TilesetId = 'pack';
-export const DEFAULT_TILESET: TilesetId = 'pack';
+let activeTileset: TilesetId = 'harmonious';
+export const DEFAULT_TILESET: TilesetId = 'harmonious';
 export function setActiveTileset(id: TilesetId): void {
   activeTileset = id;
 }
@@ -93,9 +106,8 @@ export function activeTilesetId(): TilesetId {
 
 /** recorte de chão do tileset ativo: variante pela hash do tile */
 export function groundRect(kind: 'grass' | 'dirt' | 'sand' | 'snow', variant: number): { file: string; rect: Rect } {
-  if (activeTileset === 'pack') {
-    const list = PACK_GROUND[kind] ?? PACK_GROUND.grass;
-    return { file: PACK_GROUND_FILE, rect: list[((variant % list.length) + list.length) % list.length] };
+  if (activeTileset === 'pixellab' && kind !== 'snow') {
+    return { file: PIXELLAB_GROUND_FILES[kind], rect: PIXELLAB_GROUND_RECTS[kind] };
   }
   return { file: GROUND_TILES_FILE, rect: GROUND_TILES[kind] };
 }
@@ -373,6 +385,10 @@ export function allAssetFiles(): string[] {
   set.add(PACK_GROUND_FILE);
   set.add(PACK_WATER_FILE);
   set.add(PACK_WATER_DEEP_FILE);
+  set.add(PIXELLAB_GROUND_FILES.grass);
+  set.add(PIXELLAB_GROUND_FILES.dirt);
+  set.add(PIXELLAB_GROUND_FILES.sand);
+  set.add('Tilesets/pixellab/05_grama_riacho.png');
   set.add(FRUIT_SHEET);
   set.add(SEED_SHEET);
   set.add(INSECT_SHEET);
