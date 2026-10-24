@@ -149,28 +149,6 @@ body {
   background: rgba(70, 110, 140, 0.7);
 }
 
-/* Alternância de tileset acessível no celular mesmo com o HUD recolhido. */
-#btn-tileset {
-  position: fixed;
-  top: calc(92px + env(safe-area-inset-top));
-  right: calc(10px + env(safe-area-inset-right));
-  z-index: 26;
-  min-height: 36px;
-  max-width: calc(100vw - 20px);
-  padding: 7px 11px;
-  border: 1px solid rgba(140, 190, 120, 0.55);
-  border-radius: 7px;
-  background: rgba(12, 18, 12, 0.86);
-  color: #e8f3df;
-  font: 700 12px ui-monospace, monospace;
-  cursor: pointer;
-  touch-action: manipulation;
-}
-
-#btn-tileset[aria-pressed="true"] {
-  background: rgba(70, 110, 140, 0.7);
-}
-
 /* ---------- controles de toque ---------- */
 #touch {
   position: fixed;

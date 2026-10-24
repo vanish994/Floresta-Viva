@@ -9,7 +9,7 @@ import { Input } from './game/input';
 import { TouchControls } from './game/touch';
 import { CanvasRenderer } from './render/CanvasRenderer';
 import { composeScene, type DebugMode } from './render/scene';
-import { allAssetFiles, setActiveTileset, activeTilesetId } from './render/manifest';
+import { allAssetFiles } from './render/manifest';
 import { saveWorld, loadWorld, clearSave, applyChunkDiffs } from './world/persistence';
 import { seedFromString } from './core/rng';
 import { hash2 } from './core/rng';
@@ -180,8 +180,6 @@ function loop(now: number) {
   if (input.consume('KeyP')) world.clock.paused = !world.clock.paused;
   if (input.consume('KeyF') || touch.consumeCut()) cutTree();
   if (input.consume('KeyG') || touch.consumePlant()) plantSeedling();
-  // T no teclado e botão de toque executam a mesma ação.
-  if (input.consume('KeyT')) toggleTileset();
 
   const kb = input.axis();
   const tAxis = touch.state.axis;
@@ -211,33 +209,6 @@ function loop(now: number) {
   updateHud(scene.ops.length);
   requestAnimationFrame(loop);
 }
-
-function updateTilesetButton() {
-  const button = document.getElementById('btn-tileset');
-  if (!button) return;
-  const active = activeTilesetId();
-  // Mostra sempre as DUAS opções e deixa claro qual será ativada no próximo toque.
-  button.textContent = active === 'harmonious'
-    ? '🗺 Harmonioso → PixelLab'
-    : '🗺 PixelLab → Harmonioso';
-  button.setAttribute('aria-pressed', String(active === 'pixellab'));
-  button.setAttribute('aria-label', active === 'harmonious'
-    ? 'Tileset atual: Harmonioso. Toque para usar PixelLab.'
-    : 'Tileset atual: PixelLab. Toque para usar Harmonioso.');
-}
-
-function toggleTileset() {
-  const next = activeTilesetId() === 'harmonious' ? 'pixellab' : 'harmonious';
-  setActiveTileset(next);
-  updateTilesetButton();
-}
-
-updateTilesetButton();
-
-document.getElementById('btn-tileset')?.addEventListener('click', () => {
-  void rainAudio.unlock();
-  toggleTileset();
-});
 
 function cutTree() {
   const cfg = world.cfg;
@@ -316,8 +287,7 @@ function updateHud(ops: number) {
   const water = world.stats.waterVolume >= 1000 ? `${(world.stats.waterVolume / 1000).toFixed(1)}k m³` : `${world.stats.waterVolume.toFixed(0)} m³`;
   const sediment = world.stats.sandCells;
   el('hud-perf').textContent = `${fps.toFixed(0)} fps · ${world.chunks.size} chunks · ${world.stats.plants} plantas · água ${water} · areia ${sediment} cél. · ${ops} ops · gen ${world.stats.genMs.toFixed(1)} ms · sim ${world.stats.simMs.toFixed(1)} ms${spr}`;
-  const tilesetLabel = activeTilesetId() === 'pixellab' ? 'PixelLab' : 'Harmonioso';
-  el('hud-debug').textContent = `${DEBUG_MODES[debugIdx] ? `debug: ${DEBUG_MODES[debugIdx]}` : 'debug: off (Q alterna)'} · tileset: ${tilesetLabel} (T alterna)`;
+  el('hud-debug').textContent = DEBUG_MODES[debugIdx] ? `debug: ${DEBUG_MODES[debugIdx]}` : 'debug: off (Q alterna)';
 
   // estado aquático: profundidade/correnteza reais + fôlego
   const swim = el('hud-swim');

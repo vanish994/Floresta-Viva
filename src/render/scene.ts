@@ -7,7 +7,7 @@
  * micro-sítio permite. Nada é sorteado por tile isolado.
  */
 import type { World } from '../world/world';
-import type { Chunk } from '../world/chunk';
+import { SOIL_ALLUVIAL, SOIL_CLAY, SOIL_FOREST, SOIL_ROCK, SOIL_SAND, type Chunk } from '../world/chunk';
 import { SPECIES, type PlantRecord } from '../world/flora';
 import { plantSize } from '../world/ecology';
 import { clamp, hash2 } from '../core/rng';
@@ -17,6 +17,7 @@ import {
   FAUNA_SHEETS, faunaRect, faunaFrameCount, faunaHasAnim, faunaFlip,
   activeTilesetId, groundRect, PACK_WATER_FILE, PACK_WATER_DEEP_FILE, PACK_WATER_FRAMES,
 } from './manifest';
+import { PIXELLAB_WANG, wangTransition, streamCornerKey } from './pixellab';
 import {
   agentView,
   CORPSE_HOURS,
@@ -89,16 +90,131 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
   let tileCount = 0;
   let spriteCount = 0;
 
+  // O renderer consulta a mesma célula para o chão, os quatro cantos Wang,
+  // margens, água e vegetação. Memoizar por tile evita repetir divisão/chunk lookup.
+  const atCache = new Map<string, { chunk: Chunk; ci: number } | null>();
   const at = (tx: number, ty: number): { chunk: Chunk; ci: number } | null => {
+    const key = `${tx},${ty}`;
+    if (atCache.has(key)) return atCache.get(key)!;
     const n = cfg.chunkTiles / cfg.simCellTiles;
     const cx = Math.floor(tx / cfg.chunkTiles);
     const cy = Math.floor(ty / cfg.chunkTiles);
     const chunk = world.getChunk(cx, cy);
-    if (!chunk) return null;
+    if (!chunk) {
+      atCache.set(key, null);
+      return null;
+    }
     const lx = Math.floor(tx / cfg.simCellTiles) - cx * n;
     const ly = Math.floor(ty / cfg.simCellTiles) - cy * n;
-    if (lx < 0 || ly < 0 || lx >= n || ly >= n) return null;
-    return { chunk, ci: chunk.cellIdx(lx, ly) };
+    if (lx < 0 || ly < 0 || lx >= n || ly >= n) {
+      atCache.set(key, null);
+      return null;
+    }
+    const value = { chunk, ci: chunk.cellIdx(lx, ly) };
+    atCache.set(key, value);
+    return value;
+  };
+
+  const usePixelLab = activeTilesetId() === 'pixellab';
+  // Deriva o bioma visual dos dados físicos que já existem no chunk; não cria
+  // estado paralelo nem altera geração/save. 0=água, 1=margem, 2=folhiço,
+  // 3=grama, 4=rocha. Cache local: cada tile/canto é classificado uma vez.
+  const biomeCache = new Map<string, number>();
+  const streamCache = new Map<string, boolean>();
+  const canopyProxyCache = new Map<string, number>();
+  const tileKey = (tx: number, ty: number) => `${tx},${ty}`;
+  const isStreamTile = (tx: number, ty: number): boolean => {
+    const key = tileKey(tx, ty);
+    const cached = streamCache.get(key);
+    if (cached !== undefined) return cached;
+    const a = at(tx, ty);
+    const stream = !!a && a.chunk.waterDepth[a.ci] > 0.025 && (a.chunk.waterKind[a.ci] & 2) !== 0;
+    streamCache.set(key, stream);
+    return stream;
+  };
+  const nearbyPlantCount = (tx: number, ty: number, chunk: Chunk): number => {
+    const n = chunk.n;
+    const lx = Math.floor(tx / cfg.simCellTiles) - chunk.cx * n;
+    const ly = Math.floor(ty / cfg.simCellTiles) - chunk.cy * n;
+    const k = `${chunk.cx},${chunk.cy},${lx},${ly}`;
+    const cached = canopyProxyCache.get(k);
+    if (cached !== undefined) return cached;
+    let count = 0;
+    // plantas em 3×3 células: proxy barato da copa local, sem chamar plantSize
+    // nem recalcular a cobertura ecológica de cada árvore por tile renderizado.
+    for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+      const x = lx + ox, y = ly + oy;
+      if (x < 0 || y < 0 || x >= n || y >= n) continue;
+      count += chunk.plantsInCell(x, y).length;
+    }
+    canopyProxyCache.set(k, count);
+    return count;
+  };
+  const groundLevelAtTile = (tx: number, ty: number): number => {
+    const key = tileKey(tx, ty);
+    const cached = biomeCache.get(key);
+    if (cached !== undefined) return cached;
+    const a = at(tx, ty);
+    if (!a) { biomeCache.set(key, 3); return 3; }
+    const { chunk, ci } = a;
+    const depth = chunk.waterDepth[ci];
+    if (depth > 0.12) { biomeCache.set(key, 0); return 0; }
+
+    // Deposição costeira (areia/sandLayer) e faixa de água rasa dão a transição
+    // de lama, sem classificar cada pixel de água como um biome novo.
+    const sandLayer = chunk.sandLayer[ci] / Math.max(0.001, cfg.sandMinLayerMeters * 1.5);
+    const sandFraction = chunk.sand[ci];
+    if (depth > 0.025 || sandLayer > 0.45 || sandFraction > 0.72 || chunk.soilType[ci] === SOIL_SAND) {
+      biomeCache.set(key, 1);
+      return 1;
+    }
+    // A beira seca adjacente à lâmina é lama úmida (banda de transição real).
+    let nearWater = false;
+    for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const n = at(tx + ox * cfg.simCellTiles, ty + oy * cfg.simCellTiles);
+      if (n && n.chunk.waterDepth[n.ci] > 0.025) { nearWater = true; break; }
+    }
+    if (nearWater && chunk.moisture[ci] > 0.42) { biomeCache.set(key, 1); return 1; }
+
+    // Encostas/solo rochoso usam o tileset Wang de relevo.
+    if (chunk.soilType[ci] === SOIL_ROCK || chunk.slope[ci] > 2.8) { biomeCache.set(key, 4); return 4; }
+    // Folhiço em floresta fechada: usa o cache de copa quando existe; no início
+    // de mundo (antes do cache ecológico), aproxima por árvores nas 3×3 células.
+    // Assim as clareiras continuam grama mesmo quando a umidade/forragem inicial
+    // é baixa, e a floresta densa ganha o chão de folhas do tileset PixelLab.
+    if (chunk.soilType[ci] === SOIL_FOREST) {
+      const cover = chunk.coverCache?.[ci];
+      const closedCanopy = cover !== undefined ? cover > 0.62 : nearbyPlantCount(tx, ty, chunk) >= 18;
+      if (closedCanopy) { biomeCache.set(key, 2); return 2; }
+    }
+    if (chunk.soilType[ci] === SOIL_CLAY && chunk.moisture[ci] > 0.78) { biomeCache.set(key, 2); return 2; }
+    if (chunk.soilType[ci] === SOIL_ALLUVIAL || chunk.soilType[ci] === SOIL_FOREST || chunk.soilType[ci] === SOIL_CLAY) {
+      biomeCache.set(key, 3);
+      return 3;
+    }
+    biomeCache.set(key, 3);
+    return 3;
+  };
+  const pixelLabGround = (tx: number, ty: number): { file: string; rect: Rect } => {
+    const levels = [
+      groundLevelAtTile(tx, ty),
+      groundLevelAtTile(tx + 1, ty),
+      groundLevelAtTile(tx, ty + 1),
+      groundLevelAtTile(tx + 1, ty + 1),
+    ] as const;
+    // Riacho é a ramificação grama↔água corrente dos metadados PixelLab.
+    const streamBits = [
+      isStreamTile(tx, ty), isStreamTile(tx + 1, ty),
+      isStreamTile(tx, ty + 1), isStreamTile(tx + 1, ty + 1),
+    ] as const;
+    if (streamBits.some(Boolean) && levels.every((v) => v <= 3)) {
+      const sh = PIXELLAB_WANG.stream;
+      const key = streamCornerKey(streamBits);
+      return { file: sh.file, rect: sh.corners[key] ?? sh.corners['0000'] };
+    }
+    const pick = wangTransition(levels);
+    const sh = PIXELLAB_WANG[pick.sheet];
+    return { file: sh.file, rect: sh.corners[pick.key] ?? sh.corners['0000'] };
   };
 
   // fundo (vazios ainda não carregados)
@@ -135,10 +251,12 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
           : soil === 2 && moist < 0.3
             ? 'dirt'
             : 'grass';
-      const groundPick = groundRect(kind, vGround);
-      // espelho determinístico: 2 variantes × 2 orientações = 8 leituras por
-      // textura, o que quebra a "grade" de tiles sem custo extra de asset
-      const groundFlip = activeTilesetId() === 'pixellab' && ((tx + ty + vGround) & 1) === 1;
+      const groundPick = usePixelLab
+        ? pixelLabGround(tx, ty)
+        : groundRect(kind, vGround);
+      // O tileset Wang codifica os cantos; flip aleatório quebraria a borda
+      // adjacente. Os tiles antigos continuam com espelho determinístico.
+      const groundFlip = !usePixelLab && activeTilesetId() === 'pack' && ((tx + ty + vGround) & 1) === 1;
       ops.push({
         k: 'blit', img: groundPick.file,
         sx: groundPick.rect[0], sy: groundPick.rect[1], sw: 32, sh: 32,
@@ -146,13 +264,18 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
         flip: groundFlip,
       });
       tileCount++;
-      if (!snowy && sandP > 0.02) {
+      // O pack Wang não inclui uma folha de neve: no inverno clareamos o
+      // terreno PixelLab sem sobrepor um tile de outra coleção.
+      if (usePixelLab && snowy && depth <= 0.025) {
+        ops.push({ k: 'fill', x: sx, y: sy, w: T, h: T, r: 206, g: 222, b: 234, a: 0.42 });
+      }
+      if (!usePixelLab && !snowy && sandP > 0.02) {
         const sandA = clamp(sandP * sandJitter, 0, 1);
         const sandPick = groundRect('sand', vGround);
         ops.push({ k: 'blit', img: sandPick.file, sx: sandPick.rect[0], sy: sandPick.rect[1], sw: 32, sh: 32, dx: sx, dy: sy, dw: T, dh: T, alpha: sandA });
         // no tileset antigo a areia é o próprio tile de terra, então clareamos;
         // no pack a areia já é clara e esse véu só lavava a textura
-        if (activeTilesetId() === 'harmonious') {
+        if (activeTilesetId() !== 'pack') {
           ops.push({ k: 'fill', x: sx, y: sy, w: T, h: T, r: 226, g: 199, b: 138, a: sandA * 0.42 });
         }
         if (sandP > 0.45 && hash2(cfg.seed, Math.floor(tx / 3), Math.floor(ty / 3), 138) > 0.55) {
@@ -172,8 +295,14 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
       const trail = chunk.trail[ti];
       if (trail > 40 && depth < 0.1) {
         const alpha = clamp(trail / 255, 0, 1) * (snowy ? 0.35 : 0.9);
-        const dirtPick = groundRect('dirt', vGround);
-        ops.push({ k: 'blit', img: dirtPick.file, sx: dirtPick.rect[0], sy: dirtPick.rect[1], sw: 32, sh: 32, dx: sx, dy: sy, dw: T, dh: T, alpha });
+        if (usePixelLab) {
+          // trilha no tileset Wang: conserva o estado visual sem sobrepor
+          // textura Harmonious. O escurecimento é só feedback do solo batido.
+          ops.push({ k: 'fill', x: sx + 2, y: sy + T - 5, w: T - 4, h: 2, r: 55, g: 44, b: 32, a: alpha * 0.22 });
+        } else {
+          const dirtPick = groundRect('dirt', vGround);
+          ops.push({ k: 'blit', img: dirtPick.file, sx: dirtPick.rect[0], sy: dirtPick.rect[1], sw: 32, sh: 32, dx: sx, dy: sy, dw: T, dh: T, alpha });
+        }
       }
 
       // hillshade: relevo lido pela luz (encostas claras/escuras)
@@ -186,7 +315,7 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
       }
 
       // manchas de tonalidade do chão (quebra a repetição do tile único)
-      if (!snowy) {
+      if (!usePixelLab && !snowy) {
         const bp = hash2(cfg.seed, Math.floor(tx / 4), Math.floor(ty / 4), 161);
         const bp2 = hash2(cfg.seed, Math.floor(tx / 9), Math.floor(ty / 9), 162);
         if (bp < 0.34) ops.push({ k: 'fill', x: sx, y: sy, w: T, h: T, r: 18, g: 58, b: 22, a: 0.16 });
@@ -219,15 +348,20 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
           const erosion = -world.getDelta(cellX, cellY);
           if (!snowy && erosion > 0.0015) {
             const scarA = clamp((erosion - 0.0015) / 0.02, 0, 0.55);
-            const scarPick = groundRect('dirt', vGround);
-            ops.push({ k: 'blit', img: scarPick.file, sx: scarPick.rect[0], sy: scarPick.rect[1], sw: 32, sh: 32, dx: sx, dy: sy, dw: T, dh: T, alpha: scarA });
+            if (usePixelLab) {
+              ops.push({ k: 'fill', x: sx + 3, y: sy + T - 6, w: T - 6, h: 3, r: 64, g: 44, b: 30, a: scarA * 0.32 });
+            } else {
+              const scarPick = groundRect('dirt', vGround);
+              ops.push({ k: 'blit', img: scarPick.file, sx: scarPick.rect[0], sy: scarPick.rect[1], sw: 32, sh: 32, dx: sx, dy: sy, dw: T, dh: T, alpha: scarA });
+            }
           }
           if (deep) ops.push({ k: 'fill', x: sx, y: sy, w: T, h: T, r: 62, g: 50, b: 34, a: Math.min(0.42, 0.14 + nearDeep * 0.11) });
         }
       }
 
-      // penhascos (bordas íngremes) — tiles reais do sheet de cliffs
-      const cliff = chunk.cliff[ti];
+      // Os tiles Wang PixelLab já codificam relevo rochoso e borda por canto;
+      // evita sobrepor a antiga borda Harmonious no modo novo.
+      const cliff = usePixelLab ? 0 : chunk.cliff[ti];
       if (cliff & 1) {
         const r = CLIFF_SOUTH[Math.floor(hash2(cfg.seed, tx, ty, 131) * CLIFF_SOUTH.length)];
         ops.push({ k: 'blit', img: CLIFF_FILE, sx: r[0], sy: r[1], sw: r[2], sh: r[3], dx: sx, dy: sy + (T - r[3]), dw: r[2], dh: r[3] });
@@ -274,28 +408,36 @@ export function composeScene(world: World, cam: Camera, opts: SceneOptions): Sce
       // água parada tem superfície estável; correnteza acelera os quadros
       const frameMs = 420 / (0.6 + Math.min(2.5, speed * 12));
       const frameIdx = Math.floor(opts.timeMs / frameMs) % 4;
-      // superfície e fundo: o tileset do pack usa os quadros extraídos do pack
-      const usePixelLab = activeTilesetId() === 'pixellab';
-      const mid = usePixelLab
-        ? ([64, 32, 32, 32] as Rect) // água parada (cantos 0000) do tileset de lago
-        : SPRITES.water_mid.frames[frameIdx];
-      ops.push({
-        k: 'blit',
-        img: usePixelLab ? 'Tilesets/pixellab/01_lago_margem.png' : SPRITES.water_mid.file,
-        sx: mid[0], sy: mid[1], sw: mid[2], sh: mid[3], dx: sx, dy: sy, dw: T, dh: T,
-        alpha: alpha * (usePixelLab ? 0.88 : 0.92) * (snowy ? 0.85 : 1),
-      });
+      // PixelLab já fornece água no Wang de terreno (cantos e margem). No modo
+      // novo não desenha outra textura opaca por cima: só colore água rasa pela
+      // lâmina física e mantém os filetes de correnteza abaixo.
+      const usePack = activeTilesetId() === 'pack';
       const deepA = smoothstepLocal(0.35, 1.1, d);
-      if (deepA > 0.02) {
-        const deep = usePixelLab
-          ? ([64, 32, 32, 32] as Rect)
-          : SPRITES.water_deep.frames[frameIdx];
+      if (usePixelLab) {
+        const wetTint = clamp(alpha * (0.08 + deepA * 0.12), 0, 0.2);
+        if (wetTint > 0.005) ops.push({ k: 'fill', x: sx, y: sy, w: T, h: T, r: 18, g: 112, b: 137, a: wetTint });
+        if (deepA > 0.12) ops.push({ k: 'fill', x: sx, y: sy, w: T, h: T, r: 6, g: 34, b: 54, a: deepA * 0.12 });
+      } else {
+        const mid = usePack
+          ? ([(frameIdx % PACK_WATER_FRAMES) * T, 0, T, T] as Rect)
+          : SPRITES.water_mid.frames[frameIdx];
         ops.push({
           k: 'blit',
-          img: usePixelLab ? 'Tilesets/pixellab/01_lago_margem.png' : SPRITES.water_deep.file,
-          sx: deep[0], sy: deep[1], sw: deep[2], sh: deep[3], dx: sx, dy: sy, dw: T, dh: T,
-          alpha: deepA * (usePixelLab ? 0.95 : 1),
+          img: usePack ? PACK_WATER_FILE : SPRITES.water_mid.file,
+          sx: mid[0], sy: mid[1], sw: mid[2], sh: mid[3], dx: sx, dy: sy, dw: T, dh: T,
+          alpha: alpha * (usePack ? 0.82 : 0.92) * (snowy ? 0.85 : 1),
         });
+        if (deepA > 0.02) {
+          const deep = usePack
+            ? ([(frameIdx % PACK_WATER_FRAMES) * T, 0, T, T] as Rect)
+            : SPRITES.water_deep.frames[frameIdx];
+          ops.push({
+            k: 'blit',
+            img: usePack ? PACK_WATER_DEEP_FILE : SPRITES.water_deep.file,
+            sx: deep[0], sy: deep[1], sw: deep[2], sh: deep[3], dx: sx, dy: sy, dw: T, dh: T,
+            alpha: deepA * (usePack ? 0.9 : 1),
+          });
+        }
       }
       // Profundidade legível: água rasa mantém o brilho; água funda ganha
       // uma camada azul-escura e uma faixa de luz na superfície.
