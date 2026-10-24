@@ -82,12 +82,12 @@ export const PACK_WATER_FRAMES = 4;
 export const PIXELLAB_GROUND_FILES = {
   grass: 'Tilesets/pixellab/03_chao_grama.png',
   dirt: 'Tilesets/pixellab/02_margem_chao_floresta.png',
-  sand: 'Tilesets/pixellab/01_lago_margem.png',
+  sand: 'Tilesets/pixellab/02_margem_chao_floresta.png',
 } as const;
 export const PIXELLAB_GROUND_RECTS: Record<'grass' | 'dirt' | 'sand', Rect> = {
   grass: [0, 96, 32, 32],
   dirt: [0, 96, 32, 32],
-  sand: [0, 96, 32, 32],
+  sand: [64, 32, 32, 32],
 };
 
 /**
