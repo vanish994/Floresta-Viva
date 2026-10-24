@@ -20,7 +20,10 @@
     "sprites:fauna": "tsx tools/extract-fauna-sprites.ts",
     "visual:fauna": "tsx tools/fauna-visual.ts",
     "sprites:dirs": "tsx tools/extract-direction-sprites.ts",
-    "visual:dirs": "tsx tools/fauna-directions.ts"
+    "visual:dirs": "tsx tools/fauna-directions.ts",
+    "sprites:pack": "tsx tools/extract-pack-tiles.ts",
+    "visual:tileset": "tsx tools/tileset-compare.ts",
+    "sprites:pixellab": "tsx tools/import-pixellab-tiles.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

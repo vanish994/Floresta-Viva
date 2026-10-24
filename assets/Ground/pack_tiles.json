@@ -1,0 +1,35 @@
+{
+  "tile": 32,
+  "source": "Free asset pack, thank u so much!.zip → 1. Grass and dirt.png, 7. Snow.png, 9. Beach.png",
+  "pipeline": "área 32px → harmonize(sat 0.86, contraste 0.84, 12 níveis)",
+  "cells": {
+    "0": "grass",
+    "1": "grass",
+    "2": "grass",
+    "3": "grass",
+    "4": "dirt",
+    "5": "dirt",
+    "6": "sand",
+    "7": "sand",
+    "8": "snow"
+  },
+  "kinds": {
+    "grass": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "dirt": [
+      4,
+      5
+    ],
+    "sand": [
+      6,
+      7
+    ],
+    "snow": [
+      8
+    ]
+  }
+}

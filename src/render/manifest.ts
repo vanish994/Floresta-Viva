@@ -58,6 +58,48 @@ export const GROUND_TILES = {
 } satisfies Record<string, Rect>;
 export const GROUND_TILES_FILE = 'Miscellaneous/tiles.png';
 
+// --- tileset alternativo: pack gratuito, recolorido para o idioma do jogo ----
+// Gerado por `tools/extract-pack-tiles.ts` (área 32px + harmonize). O jogo
+// escolhe entre os dois no manifesto; nada da física/IA muda.
+export type TilesetId = 'harmonious' | 'pack';
+
+/** variantes por tipo: o `groundVariant` do tile (0..3) escolhe pelo hash */
+export const PACK_GROUND: Record<'grass' | 'dirt' | 'sand' | 'snow', Rect[]> = {
+  grass: [[0, 0, 32, 32], [32, 0, 32, 32], [64, 0, 32, 32], [96, 0, 32, 32]],
+  dirt: [[128, 0, 32, 32], [160, 0, 32, 32]],
+  sand: [[192, 0, 32, 32], [224, 0, 32, 32]],
+  // ordem gerada por `tools/extract-pack-tiles.ts` (coluna = índice na folha)
+  snow: [[256, 0, 32, 32]],
+};
+export const PACK_GROUND_FILE = 'Ground/pack_tiles.png';
+export const PACK_WATER_FILE = 'Water/pack_water.png';
+export const PACK_WATER_DEEP_FILE = 'Water/pack_water_deep.png';
+/** 4 quadros de superfície (o render usa a velocidade real para o ritmo) */
+export const PACK_WATER_FRAMES = 4;
+
+/**
+ * Tileset ativo — UM ponto de decisão no render (nada de flag espalhada).
+ * `setActiveTileset` existe para o comparador A/B (`tools/tileset-compare.ts`)
+ * e para o teste de consistência; o jogo usa o padrão abaixo.
+ */
+let activeTileset: TilesetId = 'pack';
+export const DEFAULT_TILESET: TilesetId = 'pack';
+export function setActiveTileset(id: TilesetId): void {
+  activeTileset = id;
+}
+export function activeTilesetId(): TilesetId {
+  return activeTileset;
+}
+
+/** recorte de chão do tileset ativo: variante pela hash do tile */
+export function groundRect(kind: 'grass' | 'dirt' | 'sand' | 'snow', variant: number): { file: string; rect: Rect } {
+  if (activeTileset === 'pack') {
+    const list = PACK_GROUND[kind] ?? PACK_GROUND.grass;
+    return { file: PACK_GROUND_FILE, rect: list[((variant % list.length) + list.length) % list.length] };
+  }
+  return { file: GROUND_TILES_FILE, rect: GROUND_TILES[kind] };
+}
+
 // --- ecossistema: frutos, sementes e insetos ---------------------------------
 /** folha de frutos: 8 colunas × 16 px; cada fruto ocupa 2 células (maduro, verde) */
 export const FRUIT_SHEET = 'Fruits/fruits.png';
@@ -328,6 +370,9 @@ export function allAssetFiles(): string[] {
   const set = new Set<string>([GROUND_TILES_FILE]);
   for (const f of Object.values(TREE_FILES)) for (const p of Object.values(f)) set.add(p as string);
   set.add('Cliffs/Cliffs_Grass.png');
+  set.add(PACK_GROUND_FILE);
+  set.add(PACK_WATER_FILE);
+  set.add(PACK_WATER_DEEP_FILE);
   set.add(FRUIT_SHEET);
   set.add(SEED_SHEET);
   set.add(INSECT_SHEET);

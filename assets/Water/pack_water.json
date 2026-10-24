@@ -1,0 +1,58 @@
+{
+  "tile": 32,
+  "frames": 4,
+  "source": "Free asset pack, thank u so much!.zip → 2. Water.png (linha de superfície)",
+  "deep": "mesma arte com deepen() (0.62/0.74/0.90)",
+  "mid": [
+    [
+      0,
+      0,
+      32,
+      32
+    ],
+    [
+      32,
+      0,
+      32,
+      32
+    ],
+    [
+      64,
+      0,
+      32,
+      32
+    ],
+    [
+      96,
+      0,
+      32,
+      32
+    ]
+  ],
+  "deepRects": [
+    [
+      0,
+      0,
+      32,
+      32
+    ],
+    [
+      32,
+      0,
+      32,
+      32
+    ],
+    [
+      64,
+      0,
+      32,
+      32
+    ],
+    [
+      96,
+      0,
+      32,
+      32
+    ]
+  ]
+}
